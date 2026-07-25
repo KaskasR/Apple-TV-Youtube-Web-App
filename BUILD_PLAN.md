@@ -17,9 +17,11 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
+**Current status: Phase 0 done. Phase 1 (cast spike) is next.**
+
 ---
 
-## Phase 0 — Skeleton + pipeline (get to "deployed" immediately)
+## Phase 0 — Skeleton + pipeline (get to "deployed" immediately) ✅ done
 
 **Goal:** A blank Next.js app, in git, live on Vercel, before writing any real features. This proves
 your deploy pipeline works so it's never a mystery later.

@@ -1,36 +1,33 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TV Guide
 
-## Getting Started
+A curated YouTube TV guide + remote control, built for one senior/parent user watching on an
+Apple TV. Browse recent uploads and live streams from favorite channels on an iPhone/iPad, then
+tap a video to Play Now or Queue Next on the TV via YouTube's "Link with TV code" pairing.
 
-First, run the development server:
+See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, and
+[`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phased build plan and current status.
+
+## Status
+
+- **Phase 0 — Skeleton + pipeline:** done. Blank Next.js app, deployed to Vercel.
+- **Phase 1 — Cast spike (Lounge API):** next up.
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev        # local dev at http://localhost:3000
+npm run build       # production build
+npm run lint         # eslint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Copy `.env.example` to `.env.local` and fill in `YOUTUBE_API_KEY` once Phase 2 needs it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx vercel          # first deploy / preview
+npx vercel --prod   # production deploy
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+No GitHub integration — git is used for local commit snapshots only; deploys go straight from the
+terminal via the Vercel CLI.
