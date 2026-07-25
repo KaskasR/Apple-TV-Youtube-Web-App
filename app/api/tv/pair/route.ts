@@ -9,8 +9,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { screenId, loungeToken } = await pairWithScreen(code);
-    return NextResponse.json({ screenId, token: loungeToken });
+    const { screenId, loungeToken, session } = await pairWithScreen(code);
+    return NextResponse.json({ screenId, token: loungeToken, ...session });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Pairing failed.";
     return NextResponse.json({ error: message }, { status: 502 });

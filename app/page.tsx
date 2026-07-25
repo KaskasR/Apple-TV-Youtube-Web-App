@@ -4,10 +4,18 @@ import { useState, type FormEvent } from "react";
 
 const TEST_VIDEO_ID = "dQw4w9WgXcQ";
 
+type Session = {
+  screenId: string;
+  token: string;
+  sid: string;
+  gsessionid: string;
+  rid: number;
+};
+
 type PairState =
   | { status: "idle" }
   | { status: "pairing" }
-  | { status: "paired"; screenId: string; token: string }
+  | ({ status: "paired" } & Session)
   | { status: "error"; message: string };
 
 type PlayState = "idle" | "playing" | "played" | "error";
@@ -29,7 +37,14 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Pairing failed.");
-      setPairState({ status: "paired", screenId: data.screenId, token: data.token });
+      setPairState({
+        status: "paired",
+        screenId: data.screenId,
+        token: data.token,
+        sid: data.sid,
+        gsessionid: data.gsessionid,
+        rid: data.rid,
+      });
     } catch (err) {
       setPairState({
         status: "error",
@@ -49,11 +64,19 @@ export default function Home() {
         body: JSON.stringify({
           screenId: pairState.screenId,
           token: pairState.token,
+          sid: pairState.sid,
+          gsessionid: pairState.gsessionid,
+          rid: pairState.rid,
           videoId: TEST_VIDEO_ID,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Command failed.");
+      setPairState((prev) =>
+        prev.status === "paired"
+          ? { ...prev, sid: data.sid, gsessionid: data.gsessionid, rid: data.rid }
+          : prev
+      );
       setPlayState("played");
     } catch (err) {
       setPlayState("error");

@@ -1,10 +1,5 @@
 const LOUNGE_BASE = "https://www.youtube.com/api/lounge";
 
-type PairResult = {
-  screenId: string;
-  loungeToken: string;
-};
-
 async function getScreen(pairingCode: string): Promise<string> {
   const url = `${LOUNGE_BASE}/pairing/get_screen?pairing_code=${encodeURIComponent(pairingCode)}`;
   const res = await fetch(url);
@@ -38,12 +33,6 @@ async function getLoungeToken(screenId: string): Promise<string> {
   return token;
 }
 
-export async function pairWithScreen(pairingCode: string): Promise<PairResult> {
-  const screenId = await getScreen(pairingCode);
-  const loungeToken = await getLoungeToken(screenId);
-  return { screenId, loungeToken };
-}
-
 type BindPayload = [string, ...unknown[]];
 
 // The bind endpoint responds with a length-prefixed stream of JSON chunks
@@ -71,24 +60,37 @@ function parseBindChunks(text: string): BindPayload[] {
   return payloads;
 }
 
-async function openBindSession(
-  loungeToken: string
-): Promise<{ sid: string; gsessionid: string }> {
-  const params = new URLSearchParams({
-    RID: "1",
+// YouTube's bc/bind endpoint requires this full set of "connection" params as query
+// params on every POST — including follow-up command requests, not just the initial
+// handshake. Omitting loungeIdToken from a later request 401s with
+// "Lounge ID Token should not be empty".
+function commonBindParams(loungeToken: string): URLSearchParams {
+  return new URLSearchParams({
+    name: "TV Guide",
+    app: "youtube-desktop",
+    device: "REMOTE_CONTROL",
     VER: "8",
     CVER: "1",
-    auth_failure_option: "send_error",
+    loungeIdToken: loungeToken,
   });
+}
+
+export type BindSession = {
+  sid: string;
+  gsessionid: string;
+  rid: number;
+};
+
+async function openBindSession(loungeToken: string): Promise<BindSession> {
+  const params = commonBindParams(loungeToken);
+  params.set("RID", "1");
+  params.set("auth_failure_option", "send_error");
+
   const body = new URLSearchParams({
-    app: "youtube-desktop",
     "mdx-version": "3",
-    name: "TV Guide",
     id: crypto.randomUUID(),
-    device: "REMOTE_CONTROL",
     capabilities: "",
     theme: "cl",
-    loungeIdToken: loungeToken,
   });
 
   const res = await fetch(`${LOUNGE_BASE}/bc/bind?${params.toString()}`, {
@@ -106,22 +108,20 @@ async function openBindSession(
   if (!sid || !gsessionid) {
     throw new Error("bind handshake response did not include SID/gsessionid");
   }
-  return { sid, gsessionid };
+  return { sid, gsessionid, rid: 2 };
 }
 
 async function sendBoundCommand(
-  sid: string,
-  gsessionid: string,
+  loungeToken: string,
+  session: BindSession,
   command: string,
   params: Record<string, string>
 ): Promise<void> {
-  const query = new URLSearchParams({
-    RID: "2",
-    VER: "8",
-    CVER: "1",
-    gsessionid,
-    SID: sid,
-  });
+  const query = commonBindParams(loungeToken);
+  query.set("RID", String(session.rid));
+  query.set("SID", session.sid);
+  query.set("gsessionid", session.gsessionid);
+
   const body = new URLSearchParams({
     count: "1",
     ofs: "0",
@@ -139,19 +139,40 @@ async function sendBoundCommand(
   }
 }
 
-// screenId isn't needed by the protocol itself (the bind session is scoped to the
-// loungeToken), but callers pass it through — keeping the signature symmetric with
-// pairWithScreen's result makes the API route contract obvious.
+export type PairResult = {
+  screenId: string;
+  loungeToken: string;
+  session: BindSession;
+};
+
+export async function pairWithScreen(pairingCode: string): Promise<PairResult> {
+  const screenId = await getScreen(pairingCode);
+  const loungeToken = await getLoungeToken(screenId);
+  const session = await openBindSession(loungeToken);
+  return { screenId, loungeToken, session };
+}
+
+// Reuses the given bind session (no new handshake — that would re-trigger the TV's
+// "new device connected" popup on every command). Only re-handshakes, once, if the
+// stored session has gone stale.
 export async function playVideo(
-  screenId: string,
   loungeToken: string,
+  session: BindSession,
   videoId: string
-): Promise<void> {
-  const { sid, gsessionid } = await openBindSession(loungeToken);
-  await sendBoundCommand(sid, gsessionid, "setPlaylist", {
+): Promise<BindSession> {
+  const commandParams = {
     videoId,
     videoIds: videoId,
     currentIndex: "0",
     currentTime: "0",
-  });
+  };
+
+  try {
+    await sendBoundCommand(loungeToken, session, "setPlaylist", commandParams);
+    return { ...session, rid: session.rid + 1 };
+  } catch {
+    const fresh = await openBindSession(loungeToken);
+    await sendBoundCommand(loungeToken, fresh, "setPlaylist", commandParams);
+    return { ...fresh, rid: fresh.rid + 1 };
+  }
 }
