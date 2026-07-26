@@ -17,7 +17,7 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 0 done. Phase 1 (cast spike) is next.**
+**Current status: Phase 1 done (cast spike works — pairing + setPlaylist via bind session). Phase 2 (real feed from one channel) is next.**
 
 ---
 
@@ -42,7 +42,7 @@ loads on your phone.
 
 ---
 
-## Phase 1 — THE SPIKE: prove you can cast to the TV (most important phase)
+## Phase 1 — THE SPIKE: prove you can cast to the TV (most important phase) ✅ done
 
 **Goal:** Pair with the Apple TV using the "Link with TV code" and make **one hardcoded video**
 play on the TV from your phone. Ugly is fine. No feeds, no tabs, no styling. This is the make-or-break

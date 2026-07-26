@@ -10,7 +10,9 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, a
 ## Status
 
 - **Phase 0 — Skeleton + pipeline:** done. Blank Next.js app, deployed to Vercel.
-- **Phase 1 — Cast spike (Lounge API):** next up.
+- **Phase 1 — Cast spike (Lounge API):** done. Pairing via TV code + `setPlaylist` casting works,
+  reusing one bind session across commands.
+- **Phase 2 — Real feed from one channel (Data API):** next up.
 
 ## Getting started
 

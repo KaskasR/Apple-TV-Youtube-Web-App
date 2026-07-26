@@ -79,6 +79,11 @@ export type BindSession = {
   sid: string;
   gsessionid: string;
   rid: number;
+  // Cumulative count of client->server messages already sent on this bind session (SID).
+  // The bind/BrowserChannel wire protocol requires this as the `ofs` param on every command —
+  // it is NOT always 0. Sending a stale `ofs` makes the server treat the request as a replay
+  // of an already-seen message and silently drop it (200 OK, no error, no effect on the TV).
+  nextOfs: number;
 };
 
 async function openBindSession(loungeToken: string): Promise<BindSession> {
@@ -108,7 +113,7 @@ async function openBindSession(loungeToken: string): Promise<BindSession> {
   if (!sid || !gsessionid) {
     throw new Error("bind handshake response did not include SID/gsessionid");
   }
-  return { sid, gsessionid, rid: 2 };
+  return { sid, gsessionid, rid: 2, nextOfs: 0 };
 }
 
 async function sendBoundCommand(
@@ -124,7 +129,7 @@ async function sendBoundCommand(
 
   const body = new URLSearchParams({
     count: "1",
-    ofs: "0",
+    ofs: String(session.nextOfs),
     req0__sc: command,
     ...Object.fromEntries(Object.entries(params).map(([k, v]) => [`req0_${k}`, v])),
   });
@@ -169,10 +174,10 @@ export async function playVideo(
 
   try {
     await sendBoundCommand(loungeToken, session, "setPlaylist", commandParams);
-    return { ...session, rid: session.rid + 1 };
+    return { ...session, rid: session.rid + 1, nextOfs: session.nextOfs + 1 };
   } catch {
     const fresh = await openBindSession(loungeToken);
     await sendBoundCommand(loungeToken, fresh, "setPlaylist", commandParams);
-    return { ...fresh, rid: fresh.rid + 1 };
+    return { ...fresh, rid: fresh.rid + 1, nextOfs: fresh.nextOfs + 1 };
   }
 }

@@ -9,19 +9,20 @@ export async function POST(request: Request) {
         sid?: string;
         gsessionid?: string;
         rid?: number;
+        nextOfs?: number;
         videoId?: string;
       }
     | null;
-  const { screenId, token, sid, gsessionid, rid, videoId } = body ?? {};
-  if (!screenId || !token || !sid || !gsessionid || !rid || !videoId) {
+  const { screenId, token, sid, gsessionid, rid, nextOfs, videoId } = body ?? {};
+  if (!screenId || !token || !sid || !gsessionid || !rid || nextOfs === undefined || !videoId) {
     return NextResponse.json(
-      { error: "Missing screenId, token, sid, gsessionid, rid, or videoId." },
+      { error: "Missing screenId, token, sid, gsessionid, rid, nextOfs, or videoId." },
       { status: 400 }
     );
   }
 
   try {
-    const session = await playVideo(token, { sid, gsessionid, rid }, videoId);
+    const session = await playVideo(token, { sid, gsessionid, rid, nextOfs }, videoId);
     return NextResponse.json({ ok: true, ...session });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Command failed.";
