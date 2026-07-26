@@ -1,6 +1,13 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import ChannelTabs from "@/components/ChannelTabs";
+import { TABS, UNIFIED_TAB_ID } from "@/lib/channels";
+
+const TAB_OPTIONS = [
+  ...TABS.map(({ id, label, emoji }) => ({ id, label, emoji })),
+  { id: UNIFIED_TAB_ID, label: "Unified", emoji: "🗂️" },
+];
 
 type Session = {
   screenId: string;
@@ -24,6 +31,7 @@ type Video = {
   channelTitle: string;
   publishedAt: string;
   duration: string | null;
+  isLive: boolean;
 };
 
 type FeedState =
@@ -38,6 +46,7 @@ export default function Home() {
   const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
   const [playError, setPlayError] = useState("");
   const [feedRequest, setFeedRequest] = useState(0);
+  const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
 
   useEffect(() => {
     if (pairState.status !== "paired") return;
@@ -46,7 +55,7 @@ export default function Home() {
     async function loadFeed() {
       setFeedState({ status: "loading" });
       try {
-        const res = await fetch("/api/feed");
+        const res = await fetch(`/api/feed?tab=${activeTabId}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed to load feed.");
         if (!cancelled) setFeedState({ status: "loaded", videos: data.videos });
@@ -64,7 +73,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [pairState.status, feedRequest]);
+  }, [pairState.status, feedRequest, activeTabId]);
 
   async function handlePair(e: FormEvent) {
     e.preventDefault();
@@ -161,6 +170,8 @@ export default function Home() {
           <p className="text-green-400">Paired with TV.</p>
           {playError && <p className="text-red-400">{playError}</p>}
 
+          <ChannelTabs tabs={TAB_OPTIONS} activeTabId={activeTabId} onSelect={setActiveTabId} />
+
           {feedState.status === "loading" && <p className="text-white/70">Loading videos…</p>}
 
           {feedState.status === "error" && (
@@ -187,12 +198,19 @@ export default function Home() {
                   className="flex flex-col gap-2 rounded-lg border border-white/15 p-3 text-left"
                 >
                   {video.thumbnailUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={video.thumbnailUrl}
-                      alt=""
-                      className="w-full rounded-md"
-                    />
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={video.thumbnailUrl}
+                        alt=""
+                        className="w-full rounded-md"
+                      />
+                      {video.isLive && (
+                        <span className="absolute left-2 top-2 rounded bg-red-600 px-2 py-1 text-xs font-bold text-white">
+                          LIVE
+                        </span>
+                      )}
+                    </div>
                   )}
                   <p className="text-lg font-semibold text-white">{video.title}</p>
                   <p className="text-sm text-white/60">

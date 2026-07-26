@@ -8,6 +8,7 @@ export type VideoSummary = {
   channelTitle: string;
   publishedAt: string;
   duration: string | null;
+  isLive: boolean;
 };
 
 function getApiKey(): string {
@@ -32,18 +33,45 @@ async function youtubeGet(path: string, params: Record<string, string>): Promise
   return res.json();
 }
 
-async function resolveUploadsPlaylistId(handle: string): Promise<string> {
+async function resolveChannel(handle: string): Promise<{ channelId: string; uploadsPlaylistId: string }> {
   const data = (await youtubeGet("channels", {
     forHandle: handle,
-    part: "contentDetails",
+    part: "id,contentDetails",
   })) as {
-    items?: { contentDetails?: { relatedPlaylists?: { uploads?: string } } }[];
+    items?: { id?: string; contentDetails?: { relatedPlaylists?: { uploads?: string } } }[];
   };
+  const channelId = data.items?.[0]?.id;
   const uploadsPlaylistId = data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-  if (!uploadsPlaylistId) {
-    throw new Error(`Could not resolve uploads playlist for channel ${handle}`);
+  if (!channelId || !uploadsPlaylistId) {
+    throw new Error(`Could not resolve channel ${handle}`);
   }
-  return uploadsPlaylistId;
+  return { channelId, uploadsPlaylistId };
+}
+
+type LiveVideo = { videoId: string; title: string; thumbnailUrl: string };
+
+async function checkLive(channelId: string): Promise<LiveVideo | null> {
+  const data = (await youtubeGet("search", {
+    channelId,
+    eventType: "live",
+    type: "video",
+    part: "snippet",
+    maxResults: "1",
+  })) as {
+    items?: {
+      id?: { videoId?: string };
+      snippet?: { title?: string; thumbnails?: { medium?: { url?: string }; default?: { url?: string } } };
+    }[];
+  };
+
+  const item = data.items?.[0];
+  const videoId = item?.id?.videoId;
+  if (!videoId) return null;
+  return {
+    videoId,
+    title: item?.snippet?.title ?? "Live now",
+    thumbnailUrl: item?.snippet?.thumbnails?.medium?.url ?? item?.snippet?.thumbnails?.default?.url ?? "",
+  };
 }
 
 type PlaylistItem = {
@@ -116,13 +144,31 @@ async function fetchDurations(videoIds: string[]): Promise<Map<string, string | 
   return durations;
 }
 
-export async function getRecentUploads(handle: string, max = 15): Promise<VideoSummary[]> {
-  const uploadsPlaylistId = await resolveUploadsPlaylistId(handle);
-  const items = await fetchPlaylistItems(uploadsPlaylistId, max);
+export async function getChannelFeed(handle: string, max = 15): Promise<VideoSummary[]> {
+  const { channelId, uploadsPlaylistId } = await resolveChannel(handle);
+  const [items, live] = await Promise.all([
+    fetchPlaylistItems(uploadsPlaylistId, max),
+    checkLive(channelId),
+  ]);
   const durations = await fetchDurations(items.map((item) => item.videoId));
 
-  return items.map((item) => ({
+  const videos: VideoSummary[] = items.map((item) => ({
     ...item,
     duration: durations.get(item.videoId) ?? null,
+    isLive: item.videoId === live?.videoId,
   }));
+
+  if (live && !videos.some((video) => video.videoId === live.videoId)) {
+    videos.unshift({
+      videoId: live.videoId,
+      title: live.title,
+      thumbnailUrl: live.thumbnailUrl,
+      channelTitle: videos[0]?.channelTitle ?? handle,
+      publishedAt: new Date().toISOString(),
+      duration: null,
+      isLive: true,
+    });
+  }
+
+  return videos;
 }

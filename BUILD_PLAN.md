@@ -17,8 +17,8 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 2 done (real feed from @zeteo, cast to TV, bind-session reuse fixed).
-Phase 3 (all channels, tabs, live badges) is next.**
+**Current status: Phase 3 done (News/Sports tabs, unified feed, live badges).
+Phase 4 (senior-friendly UI polish) is next.**
 
 ---
 
@@ -103,7 +103,7 @@ Add `YOUTUBE_API_KEY` to `.env.local` locally, and to Vercel from the terminal w
 
 ---
 
-## Phase 3 — All channels, tabs, live badges, unified feed
+## Phase 3 — All channels, tabs, live badges, unified feed ✅ done
 
 **Goal:** Add all the real channels, group them into category tabs, add a combined "Unified Feed"
 sorted by date, and mark live streams with a red LIVE badge.

@@ -15,7 +15,10 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, a
 - **Phase 2 — Real feed from one channel (Data API):** done. Real uploads from `@zeteo` render as a
   list with working Play Now buttons; also fixed a bind-session bug where reused-session commands
   were silently dropped (see the `ofs` gotcha in `CLAUDE.md`).
-- **Phase 3 — All channels, tabs, live badges:** next up.
+- **Phase 3 — All channels, tabs, live badges:** done. News (`@zeteo`) and Sports
+  (`@volleyballworld`, `@RogerThatTennis`) tabs, plus a date-sorted Unified tab; live streams get a
+  red LIVE badge via a cached `search.list` check per channel.
+- **Phase 4 — Senior-friendly UI polish:** next up.
 
 ## Getting started
 
