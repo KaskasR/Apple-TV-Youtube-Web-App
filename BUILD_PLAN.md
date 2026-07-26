@@ -17,9 +17,9 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 3 done (News/Sports tabs, unified feed, live badges). Persistent TV
-pairing (pulled forward from Phase 4) is also done — no more re-entering the TV code on every
-reload. Phase 4 (senior-friendly UI polish) is next.**
+**Current status: Phase 4 done (VideoCard, PairingModal, ConnectionStatus, Queue Next, 18px base
+type). Persistent TV pairing was pulled forward into this phase. Phase 5 (floating remote control
+bar) is next.**
 
 ---
 
@@ -126,35 +126,32 @@ Fill `lib/channels.ts` once those are settled. Commit when tabs + live badges wo
 
 ---
 
-## Phase 4 — Senior-friendly UI polish
+## Phase 4 — Senior-friendly UI polish ✅ done
 
 **Goal:** Make it look and feel right for the actual user: big targets, high-contrast dark mode,
 clean cards, clear Play Now / Queue Next buttons. Add the "Connected to Apple TV" green indicator
 and the pairing modal.
 
-**Already done (pulled forward):** persistent pairing. `lib/storage.ts` holds the paired session in
-`localStorage`; `app/page.tsx` restores it on load with no code re-entry; `app/api/tv/command/route.ts`
-re-mints an expired token from the stored screenId automatically (see CLAUDE.md's "command recovery
-is three-tiered" gotcha) and only falls back to the pairing form if the screenId itself is dead. The
-`ConnectionStatus` indicator below should just reflect this existing state — it doesn't need to
-build any new persistence logic.
+**What shipped:**
+- `components/VideoCard.tsx`: thumbnail (+ LIVE badge), title, channel/duration, and two stacked
+  56px buttons — Play Now (`Play` icon) and Queue Next (`ListPlus` icon).
+- `components/PairingModal.tsx`: the code-entry onboarding, extracted from the old inline form.
+- `components/ConnectionStatus.tsx`: green/grey pill, shown above both the pairing and paired
+  views.
+- **Queue Next** is new Lounge surface: `queueVideo()` in `lib/lounge/client.ts` sends an `addVideo`
+  command (reconstructed from community reverse-engineering, not official docs — same
+  unofficial-API caveat as everything else in `lib/lounge/`). `app/api/tv/command/route.ts` now
+  takes a `command: "play" | "queue"` field and reuses the existing tiered reconnect fallback for
+  both. **This needs real-TV verification** — confirm `addVideo` actually queues rather than
+  silently no-op'ing (see the `ofs` gotcha in CLAUDE.md for why a "looks fine, does nothing" result
+  is possible). If it doesn't work, the fix is isolated to `queueVideo()`.
+- `app/globals.css`: `html { font-size: 18px }` so Tailwind's rem-based text utilities meet
+  CLAUDE.md's base-font-size rule site-wide.
+- Persistent pairing (`lib/storage.ts`, the reconnect tiers) was pulled forward earlier and is
+  unchanged by this phase — `ConnectionStatus` just reflects that existing state.
 
 **Definition of done:** It looks clean and is comfortably usable one-handed on a phone by a senior;
 a green status shows when paired; Queue Next works.
-
-> **Paste to Claude Code:**
-> "Now do the visual design, following the 'Who it's for' rules in CLAUDE.md (min 56px primary touch
-> targets, base font >= 18px, high-contrast dark mode, no clutter). Build:
-> 1. `VideoCard`: large thumbnail, big readable title, channel name, duration, and two big buttons —
->    'Play Now' (play icon) and 'Queue Next' (plus icon). Add a `queueNext` command to the Lounge
->    client and command route.
-> 2. `PairingModal`: onboarding to enter the TV code, shown when not yet paired (i.e. when
->    `lib/storage.ts` has no stored session).
-> 3. `ConnectionStatus`: a green 'Connected to Apple TV' indicator when a screenId is stored, grey
->    when not.
-> Persistence and token-refresh already work (see CLAUDE.md) — don't rebuild that, just wire the UI
-> to the existing paired/idle state. Change nothing about the data-fetching or Lounge command logic
-> that already works."
 
 Commit after the UI feels right on your phone.
 

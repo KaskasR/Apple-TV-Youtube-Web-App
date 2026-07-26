@@ -2,6 +2,9 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
+import ConnectionStatus from "@/components/ConnectionStatus";
+import PairingModal from "@/components/PairingModal";
+import VideoCard from "@/components/VideoCard";
 import { TABS, UNIFIED_TAB_ID } from "@/lib/channels";
 import { clearSession, loadSession, saveSession } from "@/lib/storage";
 
@@ -45,6 +48,7 @@ export default function Home() {
   const [pairState, setPairState] = useState<PairState>({ status: "idle" });
   const [feedState, setFeedState] = useState<FeedState>({ status: "loading" });
   const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+  const [queueingVideoId, setQueueingVideoId] = useState<string | null>(null);
   const [playError, setPlayError] = useState("");
   const [feedRequest, setFeedRequest] = useState(0);
   const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
@@ -113,9 +117,10 @@ export default function Home() {
     }
   }
 
-  async function handlePlay(videoId: string) {
+  async function handleCommand(videoId: string, command: "play" | "queue") {
     if (pairState.status !== "paired") return;
-    setPlayingVideoId(videoId);
+    const setBusy = command === "play" ? setPlayingVideoId : setQueueingVideoId;
+    setBusy(videoId);
     setPlayError("");
     try {
       const res = await fetch("/api/tv/command", {
@@ -129,6 +134,7 @@ export default function Home() {
           rid: pairState.rid,
           nextOfs: pairState.nextOfs,
           videoId,
+          command,
         }),
       });
       const data = await res.json();
@@ -153,7 +159,7 @@ export default function Home() {
     } catch (err) {
       setPlayError(err instanceof Error ? err.message : "Command failed.");
     } finally {
-      setPlayingVideoId(null);
+      setBusy(null);
     }
   }
 
@@ -161,35 +167,20 @@ export default function Home() {
     <div className="flex min-h-dvh flex-1 flex-col items-center gap-6 bg-black px-6 py-10 text-center">
       <h1 className="text-3xl font-bold text-white">TV Guide</h1>
 
+      <ConnectionStatus paired={pairState.status === "paired"} />
+
       {pairState.status !== "paired" && (
-        <form onSubmit={handlePair} className="flex w-full max-w-xs flex-col gap-3">
-          <label htmlFor="code" className="text-lg text-white">
-            Enter the TV code from YouTube → Settings → Link with TV code
-          </label>
-          <input
-            id="code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            className="rounded-lg border border-white/30 bg-black px-4 py-3 text-xl text-white"
-            placeholder="123456"
-            inputMode="numeric"
-          />
-          <button
-            type="submit"
-            disabled={pairState.status === "pairing" || !code}
-            className="min-h-[56px] rounded-lg bg-white px-6 py-3 text-xl font-semibold text-black disabled:opacity-50"
-          >
-            {pairState.status === "pairing" ? "Pairing…" : "Pair"}
-          </button>
-          {pairState.status === "error" && (
-            <p className="text-red-400">{pairState.message}</p>
-          )}
-        </form>
+        <PairingModal
+          code={code}
+          onCodeChange={setCode}
+          onSubmit={handlePair}
+          isPairing={pairState.status === "pairing"}
+          errorMessage={pairState.status === "error" ? pairState.message : null}
+        />
       )}
 
       {pairState.status === "paired" && (
         <div className="flex w-full max-w-md flex-col gap-4">
-          <p className="text-green-400">Paired with TV.</p>
           {playError && <p className="text-red-400">{playError}</p>}
 
           <ChannelTabs tabs={TAB_OPTIONS} activeTabId={activeTabId} onSelect={setActiveTabId} />
@@ -215,38 +206,14 @@ export default function Home() {
           {feedState.status === "loaded" && feedState.videos.length > 0 && (
             <ul className="flex flex-col gap-4">
               {feedState.videos.map((video) => (
-                <li
+                <VideoCard
                   key={video.videoId}
-                  className="flex flex-col gap-2 rounded-lg border border-white/15 p-3 text-left"
-                >
-                  {video.thumbnailUrl && (
-                    <div className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={video.thumbnailUrl}
-                        alt=""
-                        className="w-full rounded-md"
-                      />
-                      {video.isLive && (
-                        <span className="absolute left-2 top-2 rounded bg-red-600 px-2 py-1 text-xs font-bold text-white">
-                          LIVE
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <p className="text-lg font-semibold text-white">{video.title}</p>
-                  <p className="text-sm text-white/60">
-                    {video.channelTitle}
-                    {video.duration ? ` · ${video.duration}` : ""}
-                  </p>
-                  <button
-                    onClick={() => handlePlay(video.videoId)}
-                    disabled={playingVideoId === video.videoId}
-                    className="min-h-[56px] rounded-lg bg-white px-6 py-3 text-xl font-semibold text-black disabled:opacity-50"
-                  >
-                    {playingVideoId === video.videoId ? "Sending…" : "Play Now"}
-                  </button>
-                </li>
+                  video={video}
+                  onPlay={() => handleCommand(video.videoId, "play")}
+                  onQueue={() => handleCommand(video.videoId, "queue")}
+                  isPlaying={playingVideoId === video.videoId}
+                  isQueuing={queueingVideoId === video.videoId}
+                />
               ))}
             </ul>
           )}

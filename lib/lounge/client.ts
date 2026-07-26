@@ -195,3 +195,24 @@ export async function playVideo(
     return { ...fresh, rid: fresh.rid + 1, nextOfs: fresh.nextOfs + 1 };
   }
 }
+
+// Queues a video without interrupting current playback ("Queue Next"). Unlike setPlaylist,
+// this is unverified against the real TV — the Lounge API is undocumented and `addVideo` is
+// reconstructed from community reverse-engineering, not an official spec. Test on the real TV;
+// if it doesn't work, this is the only function that should need to change.
+export async function queueVideo(
+  loungeToken: string,
+  session: BindSession,
+  videoId: string
+): Promise<BindSession> {
+  const commandParams = { videoId };
+
+  try {
+    await sendBoundCommand(loungeToken, session, "addVideo", commandParams);
+    return { ...session, rid: session.rid + 1, nextOfs: session.nextOfs + 1 };
+  } catch {
+    const fresh = await openBindSession(loungeToken);
+    await sendBoundCommand(loungeToken, fresh, "addVideo", commandParams);
+    return { ...fresh, rid: fresh.rid + 1, nextOfs: fresh.nextOfs + 1 };
+  }
+}
