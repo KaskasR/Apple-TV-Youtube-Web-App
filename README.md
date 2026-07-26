@@ -18,7 +18,12 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, a
 - **Phase 3 — All channels, tabs, live badges:** done. News (`@zeteo`) and Sports
   (`@volleyballworld`, `@RogerThatTennis`) tabs, plus a date-sorted Unified tab; live streams get a
   red LIVE badge via a cached `search.list` check per channel.
-- **Phase 4 — Senior-friendly UI polish:** next up.
+- **Persistent TV pairing** (pulled forward from Phase 4): done. The paired session lives in
+  `localStorage` (`lib/storage.ts`), so reloading the app no longer requires re-entering the TV
+  code; an expired lounge token is silently re-minted from the stored screen ID, and the pairing
+  form only reappears if the TV itself unlinks.
+- **Phase 4 — Senior-friendly UI polish:** next up (VideoCard, PairingModal, ConnectionStatus,
+  Queue Next).
 
 ## Getting started
 

@@ -17,8 +17,9 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 3 done (News/Sports tabs, unified feed, live badges).
-Phase 4 (senior-friendly UI polish) is next.**
+**Current status: Phase 3 done (News/Sports tabs, unified feed, live badges). Persistent TV
+pairing (pulled forward from Phase 4) is also done — no more re-entering the TV code on every
+reload. Phase 4 (senior-friendly UI polish) is next.**
 
 ---
 
@@ -131,6 +132,13 @@ Fill `lib/channels.ts` once those are settled. Commit when tabs + live badges wo
 clean cards, clear Play Now / Queue Next buttons. Add the "Connected to Apple TV" green indicator
 and the pairing modal.
 
+**Already done (pulled forward):** persistent pairing. `lib/storage.ts` holds the paired session in
+`localStorage`; `app/page.tsx` restores it on load with no code re-entry; `app/api/tv/command/route.ts`
+re-mints an expired token from the stored screenId automatically (see CLAUDE.md's "command recovery
+is three-tiered" gotcha) and only falls back to the pairing form if the screenId itself is dead. The
+`ConnectionStatus` indicator below should just reflect this existing state — it doesn't need to
+build any new persistence logic.
+
 **Definition of done:** It looks clean and is comfortably usable one-handed on a phone by a senior;
 a green status shows when paired; Queue Next works.
 
@@ -140,12 +148,13 @@ a green status shows when paired; Queue Next works.
 > 1. `VideoCard`: large thumbnail, big readable title, channel name, duration, and two big buttons —
 >    'Play Now' (play icon) and 'Queue Next' (plus icon). Add a `queueNext` command to the Lounge
 >    client and command route.
-> 2. `PairingModal`: onboarding to enter the TV code, shown when not yet paired.
+> 2. `PairingModal`: onboarding to enter the TV code, shown when not yet paired (i.e. when
+>    `lib/storage.ts` has no stored session).
 > 3. `ConnectionStatus`: a green 'Connected to Apple TV' indicator when a screenId is stored, grey
 >    when not.
-> Persist screenId + token in localStorage via `lib/storage.ts`, and per CLAUDE.md, re-mint an
-> expired token from the stored screenId automatically instead of forcing re-pairing.
-> Change nothing about the data-fetching or Lounge command logic that already works."
+> Persistence and token-refresh already work (see CLAUDE.md) — don't rebuild that, just wire the UI
+> to the existing paired/idle state. Change nothing about the data-fetching or Lounge command logic
+> that already works."
 
 Commit after the UI feels right on your phone.
 

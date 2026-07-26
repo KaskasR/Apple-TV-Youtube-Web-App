@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
 import { TABS, UNIFIED_TAB_ID } from "@/lib/channels";
+import { clearSession, loadSession, saveSession } from "@/lib/storage";
 
 const TAB_OPTIONS = [
   ...TABS.map(({ id, label, emoji }) => ({ id, label, emoji })),
@@ -49,6 +50,14 @@ export default function Home() {
   const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
 
   useEffect(() => {
+    // localStorage isn't available during SSR, so this can't be computed at render time —
+    // restore the paired session (if any) once we're running in the browser.
+    const stored = loadSession();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (stored) setPairState({ status: "paired", ...stored });
+  }, []);
+
+  useEffect(() => {
     if (pairState.status !== "paired") return;
     let cancelled = false;
 
@@ -86,15 +95,16 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Pairing failed.");
-      setPairState({
-        status: "paired",
+      const session = {
         screenId: data.screenId,
         token: data.token,
         sid: data.sid,
         gsessionid: data.gsessionid,
         rid: data.rid,
         nextOfs: data.nextOfs,
-      });
+      };
+      setPairState({ status: "paired", ...session });
+      saveSession(session);
     } catch (err) {
       setPairState({
         status: "error",
@@ -122,12 +132,24 @@ export default function Home() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Command failed.");
-      setPairState((prev) =>
-        prev.status === "paired"
-          ? { ...prev, sid: data.sid, gsessionid: data.gsessionid, rid: data.rid, nextOfs: data.nextOfs }
-          : prev
-      );
+      if (!res.ok) {
+        if (data.screenDead) {
+          clearSession();
+          setPairState({ status: "idle" });
+          throw new Error("Lost connection to the TV — please link it again.");
+        }
+        throw new Error(data.error ?? "Command failed.");
+      }
+      const session = {
+        screenId: pairState.screenId,
+        token: data.token,
+        sid: data.sid,
+        gsessionid: data.gsessionid,
+        rid: data.rid,
+        nextOfs: data.nextOfs,
+      };
+      setPairState({ status: "paired", ...session });
+      saveSession(session);
     } catch (err) {
       setPlayError(err instanceof Error ? err.message : "Command failed.");
     } finally {

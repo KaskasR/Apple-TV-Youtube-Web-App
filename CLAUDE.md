@@ -58,10 +58,10 @@ which run on Vercel as serverless functions. The browser talks only to our own `
 4. To send a command (play / queue / pause), the server opens a **bind** session and posts the
    command (`setPlaylist`, `play`, `pause`, `next`, `seekTo`, etc).
 
-**Persistence:** store the durable **screen_id** (and the current lounge_token) in the browser's
-`localStorage`. The **lounge_token can expire** — when a command fails with an auth error, the
-server should re-mint a fresh lounge_token from the stored screen_id **without** asking the user
-to re-enter the TV code. Only fall back to full re-pairing if the screen_id itself is dead.
+**Persistence (implemented):** the durable **screen_id** (and the current lounge_token, plus the
+active bind-session fields) live in the browser's `localStorage` via `lib/storage.ts`. On load,
+`app/page.tsx` restores this immediately — no code re-entry. Command failures recover in tiers
+(see the gotcha below); only a dead screen_id falls back to the pairing form.
 
 ### Serverless time limits matter
 
@@ -86,6 +86,18 @@ to re-enter the TV code. Only fall back to full re-pairing if the screen_id itse
   keep both counters flowing through the same request/response round-trip (server ↔ client
   `localStorage`/state, since sessions are reconstructed from what the client sends back each time,
   not held in server memory).
+- **Command recovery is three-tiered — know which layer you're touching.** `app/api/tv/command/route.ts`
+  no longer just fails when a command errors:
+  1. `playVideo()` in `lib/lounge/client.ts` retries once with a fresh bind session on the *same*
+     token (handles a stale `sid`/`gsessionid`).
+  2. If that still fails, the command route calls `reconnectScreen(screenId)` to re-mint the
+     `loungeToken` from the stored `screenId` (no TV code) and retries once more (handles an
+     *expired token*). The refreshed token/session go back to the client, which writes through to
+     `localStorage` via `lib/storage.ts`.
+  3. If reconnecting itself fails, the route returns `{ screenDead: true }` — the only case that
+     clears `localStorage` and drops the user back to the pairing-code form.
+  If you change bind-session or token logic, preserve this order; collapsing tiers 2/3 back into a
+  hard failure reintroduces the "have to re-link every reload" problem this was built to fix.
 - **YouTube Data API quota = 10,000 units/day (default).** Budget it:
   - Recent uploads: get the channel's **uploads playlist** via `channels.list` (1 unit) then
     `playlistItems.list` (1 unit / 50 items). **Do NOT use `search.list` for uploads** — it costs

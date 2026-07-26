@@ -157,6 +157,20 @@ export async function pairWithScreen(pairingCode: string): Promise<PairResult> {
   return { screenId, loungeToken, session };
 }
 
+export type ReconnectResult = {
+  loungeToken: string;
+  session: BindSession;
+};
+
+// Re-mints a lounge_token and opens a fresh bind session from an already-paired screenId,
+// without the "Link with TV code" step. Used to recover from an expired token without
+// asking the user to re-pair (per CLAUDE.md's persistence rule).
+export async function reconnectScreen(screenId: string): Promise<ReconnectResult> {
+  const loungeToken = await getLoungeToken(screenId);
+  const session = await openBindSession(loungeToken);
+  return { loungeToken, session };
+}
+
 // Reuses the given bind session (no new handshake — that would re-trigger the TV's
 // "new device connected" popup on every command). Only re-handshakes, once, if the
 // stored session has gone stale.
