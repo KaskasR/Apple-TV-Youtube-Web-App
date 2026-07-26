@@ -23,8 +23,8 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, a
   code; an expired lounge token is silently re-minted from the stored screen ID, and the pairing
   form only reappears if the TV itself unlinks.
 - **Phase 4 — Senior-friendly UI polish:** done. Real `VideoCard`s (Play Now + Queue Next),
-  `PairingModal`, and a `ConnectionStatus` indicator; 18px base type. Queue Next uses a new,
-  unverified Lounge command (`addVideo`) — needs testing on the real TV.
+  `PairingModal`, and a `ConnectionStatus` indicator; 18px base type. Queue Next's `addVideo`
+  Lounge command is confirmed working on the real TV.
 - **Phase 5 — Floating remote control bar:** next up.
 
 ## Getting started

@@ -142,9 +142,7 @@ and the pairing modal.
   command (reconstructed from community reverse-engineering, not official docs — same
   unofficial-API caveat as everything else in `lib/lounge/`). `app/api/tv/command/route.ts` now
   takes a `command: "play" | "queue"` field and reuses the existing tiered reconnect fallback for
-  both. **This needs real-TV verification** — confirm `addVideo` actually queues rather than
-  silently no-op'ing (see the `ofs` gotcha in CLAUDE.md for why a "looks fine, does nothing" result
-  is possible). If it doesn't work, the fix is isolated to `queueVideo()`.
+  both. **Confirmed working on the real TV.**
 - `app/globals.css`: `html { font-size: 18px }` so Tailwind's rem-based text utilities meet
   CLAUDE.md's base-font-size rule site-wide.
 - Persistent pairing (`lib/storage.ts`, the reconnect tiers) was pulled forward earlier and is

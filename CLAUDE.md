@@ -98,12 +98,12 @@ active bind-session fields) live in the browser's `localStorage` via `lib/storag
      clears `localStorage` and drops the user back to the pairing-code form.
   If you change bind-session or token logic, preserve this order; collapsing tiers 2/3 back into a
   hard failure reintroduces the "have to re-link every reload" problem this was built to fix.
-- **`queueVideo()` (Queue Next) is unverified against the real TV.** Unlike `playVideo`/`setPlaylist`
-  (proven working since Phase 1), `queueVideo` sends an `addVideo` command reconstructed from
-  community reverse-engineering of the Lounge protocol, not anything official. If Queue Next looks
-  like it succeeds but nothing happens on the TV, suspect the command name/params first — that's
-  the same "200 OK, silently dropped" failure mode as a stale `ofs`, just a different cause. Keep
-  fixes isolated to that one function.
+- **`queueVideo()` (Queue Next) sends `addVideo`, confirmed working on the real TV** (Phase 4).
+  Like `playVideo`/`setPlaylist`, it's reconstructed from community reverse-engineering of the
+  Lounge protocol, not anything official, so it can still break with no warning if YouTube changes
+  the protocol. If Queue Next ever looks like it succeeds but nothing happens on the TV, suspect the
+  command name/params first — that's the same "200 OK, silently dropped" failure mode as a stale
+  `ofs`, just a different cause. Keep fixes isolated to that one function.
 - **YouTube Data API quota = 10,000 units/day (default).** Budget it:
   - Recent uploads: get the channel's **uploads playlist** via `channels.list` (1 unit) then
     `playlistItems.list` (1 unit / 50 items). **Do NOT use `search.list` for uploads** — it costs
