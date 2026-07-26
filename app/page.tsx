@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import PairingModal from "@/components/PairingModal";
+import RemoteBar, { type RemoteCommand } from "@/components/RemoteBar";
 import VideoCard from "@/components/VideoCard";
 import { TABS, UNIFIED_TAB_ID } from "@/lib/channels";
 import { clearSession, loadSession, saveSession } from "@/lib/storage";
@@ -117,51 +118,66 @@ export default function Home() {
     }
   }
 
-  async function handleCommand(videoId: string, command: "play" | "queue") {
+  async function sendTvCommand(
+    command: "play" | "queue" | RemoteCommand,
+    extra?: { videoId?: string; seekSeconds?: number }
+  ) {
     if (pairState.status !== "paired") return;
+    const res = await fetch("/api/tv/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        screenId: pairState.screenId,
+        token: pairState.token,
+        sid: pairState.sid,
+        gsessionid: pairState.gsessionid,
+        rid: pairState.rid,
+        nextOfs: pairState.nextOfs,
+        command,
+        ...extra,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.screenDead) {
+        clearSession();
+        setPairState({ status: "idle" });
+        throw new Error("Lost connection to the TV — please link it again.");
+      }
+      throw new Error(data.error ?? "Command failed.");
+    }
+    const session = {
+      screenId: pairState.screenId,
+      token: data.token,
+      sid: data.sid,
+      gsessionid: data.gsessionid,
+      rid: data.rid,
+      nextOfs: data.nextOfs,
+    };
+    setPairState({ status: "paired", ...session });
+    saveSession(session);
+  }
+
+  async function handleCommand(videoId: string, command: "play" | "queue") {
     const setBusy = command === "play" ? setPlayingVideoId : setQueueingVideoId;
     setBusy(videoId);
     setPlayError("");
     try {
-      const res = await fetch("/api/tv/command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          screenId: pairState.screenId,
-          token: pairState.token,
-          sid: pairState.sid,
-          gsessionid: pairState.gsessionid,
-          rid: pairState.rid,
-          nextOfs: pairState.nextOfs,
-          videoId,
-          command,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.screenDead) {
-          clearSession();
-          setPairState({ status: "idle" });
-          throw new Error("Lost connection to the TV — please link it again.");
-        }
-        throw new Error(data.error ?? "Command failed.");
-      }
-      const session = {
-        screenId: pairState.screenId,
-        token: data.token,
-        sid: data.sid,
-        gsessionid: data.gsessionid,
-        rid: data.rid,
-        nextOfs: data.nextOfs,
-      };
-      setPairState({ status: "paired", ...session });
-      saveSession(session);
+      await sendTvCommand(command, { videoId });
     } catch (err) {
       setPlayError(err instanceof Error ? err.message : "Command failed.");
     } finally {
       setBusy(null);
     }
   }
+
+  const videoTitlesById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (feedState.status === "loaded") {
+      for (const video of feedState.videos) map.set(video.videoId, video.title);
+    }
+    return map;
+  }, [feedState]);
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col items-center gap-6 bg-black px-6 py-10 text-center">
@@ -180,7 +196,7 @@ export default function Home() {
       )}
 
       {pairState.status === "paired" && (
-        <div className="flex w-full max-w-md flex-col gap-4">
+        <div className="flex w-full max-w-md flex-col gap-4 pb-24">
           {playError && <p className="text-red-400">{playError}</p>}
 
           <ChannelTabs tabs={TAB_OPTIONS} activeTabId={activeTabId} onSelect={setActiveTabId} />
@@ -218,6 +234,20 @@ export default function Home() {
             </ul>
           )}
         </div>
+      )}
+
+      {pairState.status === "paired" && (
+        <RemoteBar
+          session={{
+            token: pairState.token,
+            sid: pairState.sid,
+            gsessionid: pairState.gsessionid,
+            rid: pairState.rid,
+            nextOfs: pairState.nextOfs,
+          }}
+          videoTitlesById={videoTitlesById}
+          onCommand={(command, extra) => sendTvCommand(command, extra)}
+        />
       )}
     </div>
   );

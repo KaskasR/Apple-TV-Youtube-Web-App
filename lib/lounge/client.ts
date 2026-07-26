@@ -216,3 +216,134 @@ export async function queueVideo(
     return { ...fresh, rid: fresh.rid + 1, nextOfs: fresh.nextOfs + 1 };
   }
 }
+
+// Shared retry-once-with-fresh-session wrapper for the simple fire-and-forget remote-control
+// commands below (pause/resume/next/seek) — same recovery behavior as playVideo/queueVideo above,
+// factored out here since these four are new call sites, not a refactor of the existing ones.
+async function runBoundCommand(
+  loungeToken: string,
+  session: BindSession,
+  command: string,
+  params: Record<string, string> = {}
+): Promise<BindSession> {
+  try {
+    await sendBoundCommand(loungeToken, session, command, params);
+    return { ...session, rid: session.rid + 1, nextOfs: session.nextOfs + 1 };
+  } catch {
+    const fresh = await openBindSession(loungeToken);
+    await sendBoundCommand(loungeToken, fresh, command, params);
+    return { ...fresh, rid: fresh.rid + 1, nextOfs: fresh.nextOfs + 1 };
+  }
+}
+
+// Remote-bar commands (Phase 5) — like queueVideo, these are reconstructed from community
+// reverse-engineering of the Lounge protocol, not official docs, so treat as unverified until
+// confirmed on the real TV.
+export async function pauseVideo(loungeToken: string, session: BindSession): Promise<BindSession> {
+  return runBoundCommand(loungeToken, session, "pause");
+}
+
+export async function resumeVideo(loungeToken: string, session: BindSession): Promise<BindSession> {
+  return runBoundCommand(loungeToken, session, "play");
+}
+
+export async function nextVideo(loungeToken: string, session: BindSession): Promise<BindSession> {
+  return runBoundCommand(loungeToken, session, "next");
+}
+
+export async function seekTo(
+  loungeToken: string,
+  session: BindSession,
+  timeSeconds: number
+): Promise<BindSession> {
+  return runBoundCommand(loungeToken, session, "seekTo", { newTime: String(timeSeconds) });
+}
+
+export type NowPlayingStatus = {
+  videoId?: string;
+  currentTime?: number;
+  state?: "playing" | "paused" | "buffering" | "unknown";
+};
+
+const STATUS_POLL_TIMEOUT_MS = 3000;
+
+// nowPlaying/onStateChange event payloads are reverse-engineered and have shown up as both
+// URL-encoded "key=value&..." strings and JSON in different Lounge protocol versions — try both.
+function parseEventFields(raw: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed as Record<string, string>;
+  } catch {
+    // not JSON — fall through to query-string parsing
+  }
+  const fields: Record<string, string> = {};
+  for (const pair of raw.split("&")) {
+    const [key, value] = pair.split("=");
+    if (key) fields[decodeURIComponent(key)] = decodeURIComponent(value ?? "");
+  }
+  return fields;
+}
+
+function extractNowPlaying(payloads: BindPayload[]): NowPlayingStatus | null {
+  for (const [eventName, data] of payloads) {
+    if (eventName !== "nowPlaying" && eventName !== "onStateChange") continue;
+    if (typeof data !== "string") continue;
+
+    const fields = parseEventFields(data);
+    const currentTime = fields.currentTime ? Number(fields.currentTime) : undefined;
+    const stateCode = fields.state;
+    const state =
+      stateCode === "1" ? "playing" : stateCode === "2" ? "paused" : stateCode === "3" ? "buffering" : "unknown";
+
+    if (fields.videoId || currentTime !== undefined) {
+      return { videoId: fields.videoId, currentTime, state };
+    }
+  }
+  return null;
+}
+
+// Best-effort, short-timeout listen on the existing bind session's receive channel for a
+// nowPlaying/onStateChange event. Per CLAUDE.md this must NOT be a persistent listener (would
+// outlive a serverless function) — it opens the GET listen channel, reads whatever arrives within
+// a few seconds, then gives up. Returns null on anything unexpected rather than throwing, since a
+// flaky "now playing" status should never block the app.
+export async function getNowPlayingStatus(
+  loungeToken: string,
+  session: BindSession
+): Promise<NowPlayingStatus | null> {
+  const query = commonBindParams(loungeToken);
+  query.set("SID", session.sid);
+  query.set("gsessionid", session.gsessionid);
+  query.set("RID", "rpc");
+  query.set("CI", "0");
+  query.set("TYPE", "xmlhttp");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), STATUS_POLL_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${LOUNGE_BASE}/bc/bind?${query.toString()}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) return null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let status: NowPlayingStatus | null = null;
+
+    while (!status) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      status = extractNowPlaying(parseBindChunks(buffer));
+    }
+    await reader.cancel().catch(() => {});
+    return status;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
