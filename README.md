@@ -12,7 +12,10 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, a
 - **Phase 0 — Skeleton + pipeline:** done. Blank Next.js app, deployed to Vercel.
 - **Phase 1 — Cast spike (Lounge API):** done. Pairing via TV code + `setPlaylist` casting works,
   reusing one bind session across commands.
-- **Phase 2 — Real feed from one channel (Data API):** next up.
+- **Phase 2 — Real feed from one channel (Data API):** done. Real uploads from `@zeteo` render as a
+  list with working Play Now buttons; also fixed a bind-session bug where reused-session commands
+  were silently dropped (see the `ofs` gotcha in `CLAUDE.md`).
+- **Phase 3 — All channels, tabs, live badges:** next up.
 
 ## Getting started
 
@@ -22,7 +25,7 @@ npm run build       # production build
 npm run lint         # eslint
 ```
 
-Copy `.env.example` to `.env.local` and fill in `YOUTUBE_API_KEY` once Phase 2 needs it.
+Copy `.env.example` to `.env.local` and fill in `YOUTUBE_API_KEY` (needed for the feed).
 
 ## Deploy
 

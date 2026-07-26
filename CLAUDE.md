@@ -76,6 +76,16 @@ to re-enter the TV code. Only fall back to full re-pairing if the screen_id itse
 - **The Lounge API is unofficial and undocumented.** It can change or break with no warning. Keep
   all Lounge logic isolated in `lib/lounge/` and `app/api/tv/` so it can be fixed in one place.
   **Do not scatter Lounge calls through UI components.**
+- **The bind/BrowserChannel `ofs` param is a running counter, not a constant.** The Lounge `bc/bind`
+  endpoint rides Google's BrowserChannel wire protocol. Every POST to it needs `ofs` set to the
+  cumulative number of client→server messages already sent on that bind session (SID) — the first
+  command after a handshake is `ofs=0`, the next is `ofs=1`, and so on. A wrong/stale `ofs` is **not**
+  rejected with an error — the server just silently drops the message as a duplicate (200 OK, no
+  effect on the TV), which is a nasty failure mode to debug from the client side. `BindSession` in
+  `lib/lounge/client.ts` carries this as `nextOfs` alongside `rid`; if you touch bind-session logic,
+  keep both counters flowing through the same request/response round-trip (server ↔ client
+  `localStorage`/state, since sessions are reconstructed from what the client sends back each time,
+  not held in server memory).
 - **YouTube Data API quota = 10,000 units/day (default).** Budget it:
   - Recent uploads: get the channel's **uploads playlist** via `channels.list` (1 unit) then
     `playlistItems.list` (1 unit / 50 items). **Do NOT use `search.list` for uploads** — it costs

@@ -17,7 +17,8 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 1 done (cast spike works — pairing + setPlaylist via bind session). Phase 2 (real feed from one channel) is next.**
+**Current status: Phase 2 done (real feed from @zeteo, cast to TV, bind-session reuse fixed).
+Phase 3 (all channels, tabs, live badges) is next.**
 
 ---
 
@@ -75,7 +76,7 @@ on `lib/lounge/client.ts`'s command function and iterate there.)*
 
 ---
 
-## Phase 2 — Real feed from ONE channel (Data API)
+## Phase 2 — Real feed from ONE channel (Data API) ✅ done
 
 **Goal:** Fetch recent uploads from a single channel via the YouTube Data API and show them as a plain
 list. Wire "Play Now" so tapping a real video plays it on the TV (reusing Phase 1's command route).
