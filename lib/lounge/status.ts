@@ -58,12 +58,14 @@ function parseBindChunks(text: string): BindPayload[] {
   return payloads;
 }
 
-// True if a batch contains nothing but "noop" keepalive heartbeats (or literally nothing) — the
-// server sends these constantly just to keep the long-poll connection cycling, and they carry no
-// playback information. A batch like this means "try again", not "nothing is playing".
-function isNoopOnly(payloads: BindPayload[]): boolean {
-  if (payloads.length === 0) return true;
-  return payloads.every((payload) => payload[0] === "noop");
+// True if a batch contains an actual nowPlaying/onStateChange event. Real batches often also
+// carry unrelated events (onHasPreviousNextChanged, onAudioTrackListChanged, etc.) that are
+// neither noop nor playback-relevant — treating "got some event" as good enough to stop
+// reconnecting was the bug that caused status to flicker back to "nothing playing" every few
+// seconds even while a video kept playing, since those batches genuinely have no playback info
+// to parse.
+function containsPlaybackEvent(payloads: BindPayload[]): boolean {
+  return payloads.some((payload) => payload[0] === "nowPlaying" || payload[0] === "onStateChange");
 }
 
 // nowPlaying/onStateChange event data comes through as an already-parsed object in practice
@@ -99,16 +101,24 @@ function toNumber(value: string | undefined): number | null {
 // Pure parser: given the raw decoded batch text from the bind channel's listen response, finds
 // the most recent nowPlaying/onStateChange event and returns a clear "now_playing" or
 // "nothing_playing" result. A single batch can contain several state updates (e.g. a
-// buffering->playing transition) — this takes the LAST relevant one, since that's the current
-// state, not the first. Never throws — worst case it falls back to "nothing_playing".
+// buffering->playing transition) — this takes the LAST relevant one for state/position, since
+// that's current, not the first. videoId/title only arrive on a "nowPlaying" event (confirmed
+// against the real TV — routine "onStateChange" position updates don't carry them), so those are
+// carried forward within the batch rather than being wiped out by a later onStateChange that
+// simply doesn't repeat them. Never throws — worst case it falls back to "nothing_playing".
 export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
   const payloads = parseBindChunks(raw);
   let latest: NowPlayingStatus | null = null;
+  let knownVideoId: string | null = null;
+  let knownTitle: string | null = null;
 
   for (const [eventName, data] of payloads) {
     if (eventName !== "nowPlaying" && eventName !== "onStateChange") continue;
 
     const fields = parseEventFields(data);
+    knownVideoId = fields.videoId || fields.video_id || knownVideoId;
+    knownTitle = fields.title || fields.videoTitle || knownTitle;
+
     const stateCode = fields.state;
 
     // Lounge state codes (reverse-engineered): -1 unstarted, 0 ended, 1 playing, 2 paused,
@@ -120,8 +130,8 @@ export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
 
     latest = {
       kind: "now_playing",
-      videoId: fields.videoId || fields.video_id || null,
-      title: fields.title || fields.videoTitle || null,
+      videoId: knownVideoId,
+      title: knownTitle,
       isPlaying: stateCode === "1",
       positionSeconds: toNumber(fields.currentTime),
       durationSeconds: toNumber(fields.duration),
@@ -205,8 +215,10 @@ async function fetchOneListenAttempt(
 }
 
 // Loops fetchOneListenAttempt within a bounded total time budget (TOTAL_BUDGET_MS), reconnecting
-// immediately whenever an attempt comes back with nothing but noop heartbeats, until either a
-// real event turns up or the budget runs out. Still a single bounded, request-scoped read — per
+// immediately whenever an attempt's batch has no nowPlaying/onStateChange event in it — whether
+// that's because it was pure noop, or because it only carried unrelated events (audio track
+// list, has-previous/next, etc.) — until either a real playback event turns up or the budget
+// runs out. Still a single bounded, request-scoped read — per
 // CLAUDE.md this must never become a persistent listener that outlives a serverless function —
 // it just takes several quick hops instead of assuming one GET will catch something meaningful.
 // Returns a discriminated result rather than a bare null so callers (and whoever is debugging
@@ -244,7 +256,7 @@ export async function fetchNowPlayingBatch(
       continue;
     }
 
-    if (isNoopOnly(parseBindChunks(result.raw))) continue;
+    if (!containsPlaybackEvent(parseBindChunks(result.raw))) continue;
     return result;
   }
 
