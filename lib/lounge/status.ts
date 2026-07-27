@@ -13,12 +13,18 @@ const PER_ATTEMPT_TIMEOUT_MS = 3000;
 // "noop" heartbeat rather than holding it open for a real event. Comfortably under any
 // serverless function's max duration.
 const TOTAL_BUDGET_MS = 8000;
+// Skip firing another attempt once less than this much budget remains — too little time for a
+// real round trip, just a doomed request that adds noise to the error message.
+const MIN_ATTEMPT_MS = 800;
 
 export type NowPlayingStatus =
   | { kind: "nothing_playing" }
   | {
       kind: "now_playing";
-      videoId: string;
+      // Real onStateChange payloads observed against the live TV don't include videoId at all
+      // (only currentTime/duration/state/etc.) — only some other event may ever carry it, so
+      // this stays nullable rather than gating the whole result on its presence.
+      videoId: string | null;
       title: string | null;
       isPlaying: boolean;
       positionSeconds: number | null;
@@ -60,17 +66,24 @@ function isNoopOnly(payloads: BindPayload[]): boolean {
   return payloads.every((payload) => payload[0] === "noop");
 }
 
-// nowPlaying/onStateChange event payloads have shown up as both URL-encoded "key=value&..."
-// strings and JSON in different Lounge protocol versions — try both, same as client.ts.
-function parseEventFields(raw: string): Record<string, string> {
+// nowPlaying/onStateChange event data comes through as an already-parsed object in practice
+// (the outer JSON.parse in parseBindChunks deserializes nested structures too), but fall back to
+// treating it as a JSON or URL-encoded "key=value&..." string in case of a different protocol
+// version — same defensive approach as client.ts.
+function parseEventFields(data: unknown): Record<string, string> {
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    return data as Record<string, string>;
+  }
+  if (typeof data !== "string") return {};
+
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(data);
     if (parsed && typeof parsed === "object") return parsed as Record<string, string>;
   } catch {
     // not JSON — fall through to query-string parsing
   }
   const fields: Record<string, string> = {};
-  for (const pair of raw.split("&")) {
+  for (const pair of data.split("&")) {
     const [key, value] = pair.split("=");
     if (key) fields[decodeURIComponent(key)] = decodeURIComponent(value ?? "");
   }
@@ -85,27 +98,29 @@ function toNumber(value: string | undefined): number | null {
 
 // Pure parser: given the raw decoded batch text from the bind channel's listen response, finds
 // the most recent nowPlaying/onStateChange event and returns a clear "now_playing" or
-// "nothing_playing" result. Never throws — worst case it falls back to "nothing_playing".
+// "nothing_playing" result. A single batch can contain several state updates (e.g. a
+// buffering->playing transition) — this takes the LAST relevant one, since that's the current
+// state, not the first. Never throws — worst case it falls back to "nothing_playing".
 export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
   const payloads = parseBindChunks(raw);
+  let latest: NowPlayingStatus | null = null;
 
   for (const [eventName, data] of payloads) {
     if (eventName !== "nowPlaying" && eventName !== "onStateChange") continue;
-    if (typeof data !== "string") continue;
 
     const fields = parseEventFields(data);
-    const videoId = fields.videoId || fields.video_id;
     const stateCode = fields.state;
 
     // Lounge state codes (reverse-engineered): -1 unstarted, 0 ended, 1 playing, 2 paused,
     // 3 buffering, 5 cued. Treat -1/0/missing as "nothing meaningfully playing".
-    if (!videoId || stateCode === "-1" || stateCode === "0" || stateCode === undefined) {
+    if (stateCode === undefined || stateCode === "-1" || stateCode === "0") {
+      latest = { kind: "nothing_playing" };
       continue;
     }
 
-    return {
+    latest = {
       kind: "now_playing",
-      videoId,
+      videoId: fields.videoId || fields.video_id || null,
       title: fields.title || fields.videoTitle || null,
       isPlaying: stateCode === "1",
       positionSeconds: toNumber(fields.currentTime),
@@ -113,7 +128,7 @@ export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
     };
   }
 
-  return { kind: "nothing_playing" };
+  return latest ?? { kind: "nothing_playing" };
 }
 
 function statusQueryParams(loungeToken: string, session: Pick<BindSession, "sid" | "gsessionid">): URLSearchParams {
@@ -210,7 +225,10 @@ export async function fetchNowPlayingBatch(
 
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
+    // Not enough budget left for a connection to plausibly round-trip — stop instead of firing
+    // an attempt that's essentially guaranteed to time out (this is what produced confusing
+    // "No data received within 150ms" style errors before this check existed).
+    if (remaining < MIN_ATTEMPT_MS) break;
 
     const result = await fetchOneListenAttempt(
       loungeToken,
