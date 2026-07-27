@@ -16,21 +16,24 @@ type FetchState =
   | { status: "error"; message: string };
 
 export default function NowPlayingDebugPage() {
-  const [session, setSession] = useState<ReturnType<typeof loadSession>>(null);
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [lastSid, setLastSid] = useState<string | null>(null);
   const [state, setState] = useState<FetchState>({ status: "idle" });
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSession(loadSession());
-  }, []);
-
-  useEffect(() => {
-    if (!session) return;
     let cancelled = false;
 
     async function poll() {
+      // Re-read localStorage on every poll, not just once on mount — the main app tab can
+      // self-heal a stale sid (via the existing tiered reconnect on any command) and write a
+      // fresh session to localStorage at any time. A stale in-memory snapshot here would keep
+      // hammering the dead sid forever instead of picking up the healed one.
+      const session = loadSession();
+      setHasSession(session !== null);
       if (!session) return;
+      setLastSid(session.sid);
+
       setState((prev) => (prev.status === "loaded" ? prev : { status: "loading" }));
       try {
         const params = new URLSearchParams({
@@ -58,21 +61,22 @@ export default function NowPlayingDebugPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [session, tick]);
+  }, [tick]);
 
   return (
     <div className="flex min-h-dvh flex-col gap-4 bg-black p-6 text-white">
       <h1 className="text-2xl font-bold">Now Playing — debug</h1>
 
-      {!session && (
+      {hasSession === false && (
         <p className="text-red-400">
           No TV session in localStorage — pair with the TV on the main page first, then reload
           this page.
         </p>
       )}
 
-      {session && (
+      {hasSession && (
         <>
+          <p className="text-sm text-white/50">sid in use: {lastSid}</p>
           <button
             onClick={() => setTick((n) => n + 1)}
             className="min-h-[48px] w-fit rounded-lg border border-white/30 px-6 text-lg"
