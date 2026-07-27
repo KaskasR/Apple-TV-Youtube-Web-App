@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
 import ConnectionStatus from "@/components/ConnectionStatus";
+import DebateCompanion from "@/components/DebateCompanion";
 import PairingModal from "@/components/PairingModal";
 import RemoteBar, { type RemoteCommand } from "@/components/RemoteBar";
 import VideoCard from "@/components/VideoCard";
@@ -53,6 +54,7 @@ export default function Home() {
   const [playError, setPlayError] = useState("");
   const [feedRequest, setFeedRequest] = useState(0);
   const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
 
   useEffect(() => {
     // localStorage isn't available during SSR, so this can't be computed at render time —
@@ -222,14 +224,27 @@ export default function Home() {
           {feedState.status === "loaded" && feedState.videos.length > 0 && (
             <ul className="flex flex-col gap-4">
               {feedState.videos.map((video) => (
-                <VideoCard
-                  key={video.videoId}
-                  video={video}
-                  onPlay={() => handleCommand(video.videoId, "play")}
-                  onQueue={() => handleCommand(video.videoId, "queue")}
-                  isPlaying={playingVideoId === video.videoId}
-                  isQueuing={queueingVideoId === video.videoId}
-                />
+                <Fragment key={video.videoId}>
+                  <VideoCard
+                    video={video}
+                    onPlay={() => handleCommand(video.videoId, "play")}
+                    onQueue={() => handleCommand(video.videoId, "queue")}
+                    isPlaying={playingVideoId === video.videoId}
+                    isQueuing={queueingVideoId === video.videoId}
+                    isSelected={selectedVideoId === video.videoId}
+                    onSelect={() =>
+                      setSelectedVideoId((id) => (id === video.videoId ? null : video.videoId))
+                    }
+                  />
+                  {selectedVideoId === video.videoId && (
+                    <li>
+                      <DebateCompanion
+                        videoId={video.videoId}
+                        onSeek={(seconds) => sendTvCommand("seek", { seekSeconds: seconds })}
+                      />
+                    </li>
+                  )}
+                </Fragment>
               ))}
             </ul>
           )}

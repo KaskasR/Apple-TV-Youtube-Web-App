@@ -195,7 +195,34 @@ Test the actual 'Add to Home Screen' flow on the phone. Commit.
 
 ---
 
-## Phase 7 — Hardening (do this once it's in daily use)
+## Phase 7 — Debate Companion
+
+**Goal:** Give the chapter/timestamp markers already in many videos' descriptions (common on
+debate, news, and panel-show uploads) a senior-friendly UI: parse them and let the user tap a
+chapter to jump the Apple TV straight there, reusing the existing `seekTo` Lounge command.
+
+**Definition of done:** Selecting a video that has chapter timestamps in its description shows a
+vertical list of large, tappable chapter buttons (e.g. "14:20 — Foreign Policy"); tapping one
+jumps the real TV to that point in the video within a couple of seconds. Videos with no parseable
+timestamps show nothing extra — no broken or empty UI.
+
+**What shipped:** `lib/chapters.ts` (pure `parseChapters`/`formatTimestamp`, no network calls),
+`app/api/chapters/route.ts` (GET `?videoId=`, fetches `videos.list?part=snippet` and returns
+parsed chapters, cached like the feed route), and `components/DebateCompanion.tsx` (fetches
+chapters for the selected video, renders them, calls the existing `seek` command with each
+chapter's absolute seconds). Wired into `app/page.tsx` via a new `selectedVideoId` state — tapping
+a video's thumbnail/title (a small addition to `VideoCard.tsx`) selects it and mounts
+`DebateCompanion` beneath it. None of `lib/lounge/`, `app/api/tv/command/route.ts`,
+`lib/youtube.ts`, or `app/api/feed/route.ts` were modified — `seekTo` already takes an absolute
+time in seconds, so no new Lounge surface was needed.
+
+**Out of scope for now (optional future Tier 2):** AI-assisted topic grouping and transcript
+summaries. That would need an `ANTHROPIC_API_KEY` and an unofficial YouTube transcript-fetching
+library, both bigger asks than this phase — don't start it until explicitly requested.
+
+---
+
+## Phase 8 — Hardening (do this once it's in daily use)
 
 **Goal:** Make it robust for a non-technical user: friendly errors, token-expiry recovery, quota
 resilience, empty/failed feed handling.

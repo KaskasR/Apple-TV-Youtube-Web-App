@@ -104,6 +104,13 @@ active bind-session fields) live in the browser's `localStorage` via `lib/storag
   the protocol. If Queue Next ever looks like it succeeds but nothing happens on the TV, suspect the
   command name/params first — that's the same "200 OK, silently dropped" failure mode as a stale
   `ofs`, just a different cause. Keep fixes isolated to that one function.
+- **Debate Companion (`lib/chapters.ts`, `app/api/chapters/route.ts`, `components/DebateCompanion.tsx`)
+  is additive-only.** It reuses the existing `seekTo` Lounge command as-is — `seekTo` already takes
+  an absolute time in seconds, so no new Lounge surface was added for it — and fetches
+  `videos.list?part=snippet` directly with `YOUTUBE_API_KEY` rather than importing `lib/youtube.ts`,
+  so the feed code stays untouched. Do not modify `lib/lounge/`, `app/api/tv/command/route.ts`,
+  `lib/youtube.ts`, or `app/api/feed/route.ts` to extend this feature — add to the Debate Companion
+  files themselves, or add new files alongside them.
 - **YouTube Data API quota = 10,000 units/day (default).** Budget it:
   - Recent uploads: get the channel's **uploads playlist** via `channels.list` (1 unit) then
     `playlistItems.list` (1 unit / 50 items). **Do NOT use `search.list` for uploads** — it costs
@@ -127,6 +134,7 @@ app/
   page.tsx                 # main feed / tabs
   api/
     feed/route.ts          # GET curated feeds (uploads + live) via Data API
+    chapters/route.ts      # GET chapter list for a videoId (Debate Companion)
     tv/
       pair/route.ts        # POST { code } -> { screenId } ; pairs with TV
       command/route.ts     # POST { screenId, token, command, videoId? }
@@ -134,6 +142,7 @@ app/
 lib/
   channels.ts              # channel config (handles, tab groupings, emoji/labels)
   youtube.ts               # Data API helpers (uploads playlist, live lookup, caching)
+  chapters.ts              # pure chapter-timestamp parser for Debate Companion (no network calls)
   lounge/
     client.ts              # Lounge pairing + bind + command encoding (server-only)
   storage.ts               # localStorage helpers for screenId/token (client-only)
@@ -143,6 +152,7 @@ components/
   RemoteBar.tsx            # floating bottom remote (later phase)
   PairingModal.tsx
   ConnectionStatus.tsx     # green "Connected to Apple TV" indicator
+  DebateCompanion.tsx      # chapter list for a selected video; taps seekTo the TV
 public/
   manifest.json            # PWA
   icons/                   # PWA icons
@@ -172,6 +182,10 @@ Set these in `.env.local` (local) and in the Vercel dashboard (production). Neve
 
 ```
 YOUTUBE_API_KEY=        # YouTube Data API v3 key (server-only, NOT prefixed NEXT_PUBLIC)
+ANTHROPIC_API_KEY=      # OPTIONAL, NOT YET USED. Reserved for a future Debate Companion Tier 2
+                         # (AI topic grouping + transcript summaries, needing an unofficial
+                         # transcript-fetching library). Do not wire this up until that phase is
+                         # explicitly started.
 ```
 
 (The Lounge token is obtained at runtime from the user's TV pairing; it is not an env var.)
