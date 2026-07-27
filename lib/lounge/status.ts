@@ -117,14 +117,19 @@ function statusQueryParams(loungeToken: string, session: Pick<BindSession, "sid"
   });
 }
 
+export type FetchBatchResult = { ok: true; raw: string } | { ok: false; reason: string };
+
 // Opens the bind channel's GET listen endpoint on an already-open session, reads whatever
 // arrives within a short timeout, then gives up — per CLAUDE.md this must never be a persistent
-// listener (would outlive a serverless function). Returns the raw decoded text, or null on any
-// connection failure/timeout. Never throws.
+// listener (would outlive a serverless function). Returns a discriminated result rather than a
+// bare null so callers (and whoever is debugging this against the real TV) can tell an HTTP
+// error apart from a network error apart from "nothing arrived within the timeout" — those are
+// very different failure modes and collapsing them makes this impossible to diagnose. Never
+// throws.
 export async function fetchNowPlayingBatch(
   loungeToken: string,
   session: Pick<BindSession, "sid" | "gsessionid">
-): Promise<string | null> {
+): Promise<FetchBatchResult> {
   const query = statusQueryParams(loungeToken, session);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), STATUS_POLL_TIMEOUT_MS);
@@ -135,7 +140,12 @@ export async function fetchNowPlayingBatch(
       method: "GET",
       signal: controller.signal,
     });
-    if (!res.ok || !res.body) return null;
+    if (!res.ok) {
+      return { ok: false, reason: `HTTP ${res.status} ${res.statusText}` };
+    }
+    if (!res.body) {
+      return { ok: false, reason: "Response had no readable body" };
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -148,12 +158,18 @@ export async function fetchNowPlayingBatch(
     } finally {
       await reader.cancel().catch(() => {});
     }
-    return buffer;
-  } catch {
-    // Aborted by the timeout (or a network error) — return whatever was buffered before that.
-    // A partial batch is still useful to parse; per CLAUDE.md we must give up by
-    // STATUS_POLL_TIMEOUT_MS no matter what, never hold the connection open longer.
-    return buffer.length > 0 ? buffer : null;
+    return { ok: true, raw: buffer };
+  } catch (err) {
+    // A partial batch buffered before the timeout fired is still useful to parse.
+    if (buffer.length > 0) return { ok: true, raw: buffer };
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return {
+        ok: false,
+        reason: `No data received within ${STATUS_POLL_TIMEOUT_MS}ms (idle channel timeout — the TV may just not have pushed an update in that window)`,
+      };
+    }
+    const reason = err instanceof Error ? `${err.name}: ${err.message}` : "Unknown fetch error";
+    return { ok: false, reason };
   } finally {
     clearTimeout(timeout);
   }
@@ -166,10 +182,10 @@ export async function readNowPlayingStatus(
   loungeToken: string,
   session: Pick<BindSession, "sid" | "gsessionid">
 ): Promise<NowPlayingStatus | null> {
-  const raw = await fetchNowPlayingBatch(loungeToken, session);
-  if (raw === null) return null;
+  const result = await fetchNowPlayingBatch(loungeToken, session);
+  if (!result.ok) return null;
   try {
-    return parseNowPlayingStatus(raw);
+    return parseNowPlayingStatus(result.raw);
   } catch {
     return null;
   }

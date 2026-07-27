@@ -19,15 +19,15 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const raw = await fetchNowPlayingBatch(token, { sid, gsessionid });
-    if (raw === null) {
-      return NextResponse.json({ status: null, error: "Could not reach the TV." });
+    const result = await fetchNowPlayingBatch(token, { sid, gsessionid });
+    if (!result.ok) {
+      return NextResponse.json({ status: null, error: result.reason });
     }
 
-    const status = parseNowPlayingStatus(raw);
+    const status = parseNowPlayingStatus(result.raw);
     return NextResponse.json({
       status,
-      ...(includeRaw ? { raw: raw.slice(0, RAW_PREVIEW_LIMIT) } : {}),
+      ...(includeRaw ? { raw: result.raw.slice(0, RAW_PREVIEW_LIMIT) } : {}),
     });
   } catch (err) {
     // Belt-and-suspenders — lib/lounge/status.ts already swallows its own errors, but this
