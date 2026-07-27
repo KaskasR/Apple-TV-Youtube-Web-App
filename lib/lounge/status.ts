@@ -5,7 +5,14 @@ import type { BindSession } from "@/lib/lounge/client";
 // isolated read path, not a reuse of the flaky Phase 5 attempt). Only the BindSession *type* is
 // shared, since a status read rides the same already-open bind session as commands do.
 const LOUNGE_BASE = "https://www.youtube.com/api/lounge";
-const STATUS_POLL_TIMEOUT_MS = 3000;
+// Each individual GET listen attempt gets this long before we give up on it and reconnect.
+const PER_ATTEMPT_TIMEOUT_MS = 3000;
+// Total wall-clock budget for fetchNowPlayingBatch across all reconnect attempts. Still a single
+// bounded, request-scoped operation, not a persistent listener — it just makes several quick
+// hops instead of one, since in practice the server closes each connection right after a single
+// "noop" heartbeat rather than holding it open for a real event. Comfortably under any
+// serverless function's max duration.
+const TOTAL_BUDGET_MS = 8000;
 
 export type NowPlayingStatus =
   | { kind: "nothing_playing" }
@@ -43,6 +50,14 @@ function parseBindChunks(text: string): BindPayload[] {
     }
   }
   return payloads;
+}
+
+// True if a batch contains nothing but "noop" keepalive heartbeats (or literally nothing) — the
+// server sends these constantly just to keep the long-poll connection cycling, and they carry no
+// playback information. A batch like this means "try again", not "nothing is playing".
+function isNoopOnly(payloads: BindPayload[]): boolean {
+  if (payloads.length === 0) return true;
+  return payloads.every((payload) => payload[0] === "noop");
 }
 
 // nowPlaying/onStateChange event payloads have shown up as both URL-encoded "key=value&..."
@@ -120,19 +135,18 @@ function statusQueryParams(loungeToken: string, session: Pick<BindSession, "sid"
 export type FetchBatchResult = { ok: true; raw: string } | { ok: false; reason: string };
 
 // Opens the bind channel's GET listen endpoint on an already-open session, reads whatever
-// arrives within a short timeout, then gives up — per CLAUDE.md this must never be a persistent
-// listener (would outlive a serverless function). Returns a discriminated result rather than a
-// bare null so callers (and whoever is debugging this against the real TV) can tell an HTTP
-// error apart from a network error apart from "nothing arrived within the timeout" — those are
-// very different failure modes and collapsing them makes this impossible to diagnose. Never
-// throws.
-export async function fetchNowPlayingBatch(
+// arrives within timeoutMs, then gives up. In practice the server closes the connection right
+// after sending a single message (often just a "noop" heartbeat) rather than holding it open —
+// so one attempt is fast, but frequently empty of real information. See fetchNowPlayingBatch,
+// which loops this to actually catch a real event.
+async function fetchOneListenAttempt(
   loungeToken: string,
-  session: Pick<BindSession, "sid" | "gsessionid">
+  session: Pick<BindSession, "sid" | "gsessionid">,
+  timeoutMs: number
 ): Promise<FetchBatchResult> {
   const query = statusQueryParams(loungeToken, session);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), STATUS_POLL_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let buffer = "";
 
   try {
@@ -165,7 +179,7 @@ export async function fetchNowPlayingBatch(
     if (err instanceof DOMException && err.name === "AbortError") {
       return {
         ok: false,
-        reason: `No data received within ${STATUS_POLL_TIMEOUT_MS}ms (idle channel timeout — the TV may just not have pushed an update in that window)`,
+        reason: `No data received within ${timeoutMs}ms (idle channel timeout — the TV may just not have pushed an update in that window)`,
       };
     }
     const reason = err instanceof Error ? `${err.name}: ${err.message}` : "Unknown fetch error";
@@ -173,6 +187,50 @@ export async function fetchNowPlayingBatch(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Loops fetchOneListenAttempt within a bounded total time budget (TOTAL_BUDGET_MS), reconnecting
+// immediately whenever an attempt comes back with nothing but noop heartbeats, until either a
+// real event turns up or the budget runs out. Still a single bounded, request-scoped read — per
+// CLAUDE.md this must never become a persistent listener that outlives a serverless function —
+// it just takes several quick hops instead of assuming one GET will catch something meaningful.
+// Returns a discriminated result rather than a bare null so callers (and whoever is debugging
+// this against the real TV) can tell an HTTP error apart from a network error apart from
+// "nothing arrived" — very different failure modes that shouldn't collapse into one. Never
+// throws.
+export async function fetchNowPlayingBatch(
+  loungeToken: string,
+  session: Pick<BindSession, "sid" | "gsessionid">
+): Promise<FetchBatchResult> {
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
+  let lastResult: FetchBatchResult = {
+    ok: false,
+    reason: "No data received before the overall timeout",
+  };
+
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+
+    const result = await fetchOneListenAttempt(
+      loungeToken,
+      session,
+      Math.min(PER_ATTEMPT_TIMEOUT_MS, remaining)
+    );
+    lastResult = result;
+
+    if (!result.ok) {
+      // An HTTP error (e.g. a stale/unknown SID) won't be fixed by reconnecting with the same
+      // session — stop immediately instead of burning the rest of the budget repeating it.
+      if (result.reason.startsWith("HTTP ")) return result;
+      continue;
+    }
+
+    if (isNoopOnly(parseBindChunks(result.raw))) continue;
+    return result;
+  }
+
+  return lastResult;
 }
 
 // Composes fetchNowPlayingBatch + parseNowPlayingStatus. Returns null only on a connection
