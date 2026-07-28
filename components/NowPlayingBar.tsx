@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, FastForward, Pause, Play, SkipForward } from "lucide-react";
+import { formatTimestamp } from "@/lib/chapters";
 
 // Reused command vocabulary — these map 1:1 to the existing command functions behind
 // /api/tv/command (pause/resume/next/seek). This component adds NO new remote logic; every
@@ -37,6 +38,10 @@ type NowPlayingBarProps = {
 
 const POLL_INTERVAL_MS = 4000;
 const SWIPE_DISMISS_PX = 120;
+// How often the progress handle re-computes its extrapolated position while playing. The TV sends
+// no periodic position updates (steady playback is silent), so this local tick is what makes the
+// bar advance smoothly between transitions.
+const TICK_INTERVAL_MS = 500;
 
 // Local, optimistic playback-position estimate (same approach as the old RemoteBar): the TV only
 // hands us a position anchor at transitions, so between them we extrapolate with wall-clock time.
@@ -68,6 +73,12 @@ export default function NowPlayingBar({
   const [busy, setBusy] = useState<RemoteCommand | null>(null);
   const [error, setError] = useState("");
   const [dragY, setDragY] = useState(0);
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
+  // Extrapolated position, re-computed on a timer so the handle moves; frozen while the user is
+  // actively dragging the scrubber (we show scrubValue instead then).
+  const [displayedSeconds, setDisplayedSeconds] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubValue, setScrubValue] = useState(0);
   const dragStartY = useRef<number | null>(null);
   const timeEstimateRef = useRef<TimeEstimate>({ baseTime: 0, baseTimeAnchorMs: null });
 
@@ -108,6 +119,7 @@ export default function NowPlayingBar({
           setVisible(true);
           setIsPlaying(status.isPlaying);
           if (status.videoId) setStatusVideoId(status.videoId);
+          if (status.durationSeconds !== null) setDurationSeconds(status.durationSeconds);
           if (status.positionSeconds !== null) {
             timeEstimateRef.current = {
               baseTime: status.positionSeconds,
@@ -129,6 +141,16 @@ export default function NowPlayingBar({
       if (timer) clearTimeout(timer);
     };
   }, [session.sid, session.gsessionid, session.token]);
+
+  // Tick the displayed position while the bar is visible, from the local extrapolation. Skipped
+  // while scrubbing so the user's drag isn't fought by the timer.
+  useEffect(() => {
+    if (!visible) return;
+    const id = setInterval(() => {
+      if (!scrubbing) setDisplayedSeconds(estimateCurrentTime(timeEstimateRef.current, isPlaying));
+    }, TICK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [visible, isPlaying, scrubbing]);
 
   async function run(command: RemoteCommand, extra?: { seekSeconds?: number }) {
     setBusy(command);
@@ -169,7 +191,24 @@ export default function NowPlayingBar({
     run("next");
   }
 
+  function handleScrubChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setScrubbing(true);
+    setScrubValue(Number(e.currentTarget.value));
+  }
+
+  // Commit the scrub on release (pointer/touch up or keyboard) — send the existing seek command
+  // with the dragged-to absolute position, then let the timer resume from there.
+  function commitScrub() {
+    if (!scrubbing) return;
+    setScrubbing(false);
+    setDisplayedSeconds(scrubValue);
+    run("seek", { seekSeconds: Math.round(scrubValue) });
+  }
+
   function onTouchStart(e: React.TouchEvent) {
+    // Don't start a swipe-to-dismiss when the touch begins on the scrubber — that gesture is a
+    // horizontal seek, not a downward dismiss.
+    if ((e.target as HTMLElement).closest(".nowplaying-scrubber")) return;
     dragStartY.current = e.touches[0].clientY;
   }
   function onTouchMove(e: React.TouchEvent) {
@@ -188,6 +227,11 @@ export default function NowPlayingBar({
   const channel = meta?.channelTitle ?? "";
   const thumbnail = thumbnailFor(effectiveVideoId, meta);
 
+  // Progress derivation. We only have a meaningful scrubber once the TV has reported a duration.
+  const hasDuration = durationSeconds !== null && durationSeconds > 0;
+  const positionSeconds = scrubbing ? scrubValue : Math.min(displayedSeconds, durationSeconds ?? displayedSeconds);
+  const progressPct = hasDuration ? Math.min(100, Math.max(0, (positionSeconds / durationSeconds!) * 100)) : 0;
+
   // Nothing to show → render nothing at all, so the feed is never covered.
   if (!visible || !effectiveVideoId) return null;
 
@@ -196,29 +240,37 @@ export default function NowPlayingBar({
       {/* Collapsed mini-bar */}
       {!expanded && (
         <div className="fixed inset-x-0 bottom-0 z-30 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
-          <div className="mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-white/10 bg-neutral-900 p-3 shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
-            <button
-              onClick={() => setExpanded(true)}
-              aria-label="Open now playing"
-              className="flex min-w-0 flex-1 items-center gap-3 text-left"
-            >
-              {thumbnail && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={thumbnail} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" />
-              )}
-              <div className="min-w-0">
-                <p className="truncate text-lg font-semibold text-white">{title}</p>
-                {channel && <p className="truncate text-sm text-white/60">{channel}</p>}
+          <div className="mx-auto max-w-md overflow-hidden rounded-2xl border border-white/10 bg-neutral-900 shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
+            <div className="flex items-center gap-3 p-3">
+              <button
+                onClick={() => setExpanded(true)}
+                aria-label="Open now playing"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              >
+                {thumbnail && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={thumbnail} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" />
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-lg font-semibold text-white">{title}</p>
+                  {channel && <p className="truncate text-sm text-white/60">{channel}</p>}
+                </div>
+              </button>
+              <button
+                onClick={handlePlayPause}
+                disabled={busy !== null}
+                aria-label={isPlaying ? "Pause" : "Play"}
+                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50"
+              >
+                {isPlaying ? <Pause className="h-7 w-7" /> : <Play className="h-7 w-7" fill="currentColor" />}
+              </button>
+            </div>
+            {/* Thin, non-interactive progress line (Spotify-style) */}
+            {hasDuration && (
+              <div className="h-1 w-full bg-white/15">
+                <div className="h-full bg-white" style={{ width: `${progressPct}%` }} />
               </div>
-            </button>
-            <button
-              onClick={handlePlayPause}
-              disabled={busy !== null}
-              aria-label={isPlaying ? "Pause" : "Play"}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-black disabled:opacity-50"
-            >
-              {isPlaying ? <Pause className="h-7 w-7" /> : <Play className="h-7 w-7" fill="currentColor" />}
-            </button>
+            )}
           </div>
         </div>
       )}
@@ -256,6 +308,31 @@ export default function NowPlayingBar({
             <p className="text-2xl font-bold text-white">{title}</p>
             {channel && <p className="mt-2 text-lg text-white/60">{channel}</p>}
           </div>
+
+          {/* Scrubber — drag to seek. Reuses the existing seek command; only shown once the TV has
+              reported a duration. */}
+          {hasDuration && (
+            <div className="w-full max-w-sm">
+              <input
+                type="range"
+                className="nowplaying-scrubber w-full"
+                min={0}
+                max={durationSeconds!}
+                step={1}
+                value={positionSeconds}
+                onChange={handleScrubChange}
+                onPointerUp={commitScrub}
+                onTouchEnd={commitScrub}
+                onKeyUp={commitScrub}
+                aria-label="Seek"
+                style={{ ["--progress" as string]: `${progressPct}%` }}
+              />
+              <div className="mt-1 flex justify-between text-sm text-white/60">
+                <span>{formatTimestamp(positionSeconds)}</span>
+                <span>{formatTimestamp(durationSeconds!)}</span>
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-red-400">{error}</p>}
 

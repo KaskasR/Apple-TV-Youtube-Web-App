@@ -21,3 +21,53 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Now-playing scrubber — a native range input styled senior-friendly: a tall touch area, a thick
+   track with a filled portion (driven by the --progress CSS var set inline), and a large thumb.
+   Pseudo-elements can't be expressed with Tailwind utilities, so they live here. */
+.nowplaying-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 44px; /* generous touch target; the visible track is drawn thinner below */
+  background: transparent;
+  cursor: pointer;
+}
+.nowplaying-scrubber::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #ffffff 0,
+    #ffffff var(--progress, 0%),
+    rgba(255, 255, 255, 0.25) var(--progress, 0%),
+    rgba(255, 255, 255, 0.25) 100%
+  );
+}
+.nowplaying-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -10px; /* center the 28px thumb on the 8px track */
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.nowplaying-scrubber::-moz-range-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+.nowplaying-scrubber::-moz-range-progress {
+  height: 8px;
+  border-radius: 9999px;
+  background: #ffffff;
+}
+.nowplaying-scrubber::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
