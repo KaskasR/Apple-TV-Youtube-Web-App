@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, FastForward, Pause, Play, SkipForward } from "lucide-react";
+import { ChevronDown, FastForward, Pause, Play, Rewind, SkipForward } from "lucide-react";
 import { formatTimestamp } from "@/lib/chapters";
 import DebateCompanion from "@/components/DebateCompanion";
 
@@ -183,6 +183,11 @@ export default function NowPlayingBar({
     run(isPlaying ? "pause" : "resume");
   }
 
+  function handleSkipBack() {
+    const target = Math.max(0, estimateCurrentTime(timeEstimateRef.current, isPlaying) - 10);
+    run("seek", { seekSeconds: target });
+  }
+
   function handleSkipForward() {
     const target = Math.max(0, estimateCurrentTime(timeEstimateRef.current, isPlaying) + 10);
     run("seek", { seekSeconds: target });
@@ -338,14 +343,14 @@ export default function NowPlayingBar({
 
           {error && <p className="text-red-400">{error}</p>}
 
-          <div className="flex items-center justify-center gap-8">
+          <div className="flex w-full items-center justify-between">
             <button
-              onClick={handleSkipForward}
+              onClick={handleSkipBack}
               disabled={busy !== null}
-              aria-label="Skip forward 10 seconds"
-              className="flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-50"
+              aria-label="Skip back 10 seconds"
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-50"
             >
-              <FastForward className="h-8 w-8" />
+              <Rewind className="h-7 w-7" />
             </button>
             <button
               onClick={handlePlayPause}
@@ -356,12 +361,20 @@ export default function NowPlayingBar({
               {isPlaying ? <Pause className="h-10 w-10" /> : <Play className="h-10 w-10" fill="currentColor" />}
             </button>
             <button
+              onClick={handleSkipForward}
+              disabled={busy !== null}
+              aria-label="Skip forward 10 seconds"
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-50"
+            >
+              <FastForward className="h-7 w-7" />
+            </button>
+            <button
               onClick={handleNext}
               disabled={busy !== null}
               aria-label="Skip to next video"
-              className="flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-50"
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-white disabled:opacity-50"
             >
-              <SkipForward className="h-8 w-8" />
+              <SkipForward className="h-7 w-7" />
             </button>
           </div>
 
