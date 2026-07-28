@@ -7,7 +7,10 @@ Guidance for Claude Code when working in this repo. Read this fully before makin
 A **curated YouTube TV guide + remote control** built for one primary user: a senior/parent
 watching on an **Apple TV**. The user opens this app on their **iPhone/iPad**, browses recent
 uploads and live streams from a handful of favorite channels, and taps a video to **Play Now**
-or **Queue Next** on the TV.
+or **Queue Next** on the TV. Once something is playing, a **Spotify-style now-playing bar**
+(`components/NowPlayingBar.tsx`) sits at the bottom: a collapsed mini-bar and a full-screen
+expanded view with play/pause, skip ±10s, next, a **drag-to-seek scrubber**, and a **chapter list**
+(jump to timestamps parsed from the video description).
 
 The whole point is: **big, obvious, senior-friendly UI** + **one-tap casting to a TV that's
 already running the YouTube app.**
@@ -65,11 +68,73 @@ active bind-session fields) live in the browser's `localStorage` via `lib/storag
 
 ### Serverless time limits matter
 
-- **Sending commands** (Play Now, Queue, Pause) = short requests. Totally fine on Vercel.
-- **Listening for live "now playing" status** uses Lounge's long-polling `bind` channel, which can
-  outlive a serverless function's max duration. **Do not** build a persistent listener for the MVP.
-  For "now playing" status, do a short-timeout poll (server fetches one event batch, returns fast,
-  client re-polls every few seconds), or defer the feature. This is called out again in BUILD_PLAN.md.
+- **Sending commands** (Play Now, Queue, Pause, Resume, Seek, Next) = short requests. Fine on Vercel.
+- **Listening for live "now playing" status** uses Lounge's `bind` back channel, which would outlive
+  a serverless function's max duration if held open. **Do not** build a persistent listener. The
+  implemented reader (`lib/lounge/status.ts`) instead makes a *bounded* series of quick
+  reconnect-and-read hops within an ~8s budget and returns fast — see the next subsection.
+
+### Now-playing status — implemented, read-only (`lib/lounge/status.ts` + `app/api/tv/nowplaying`)
+
+This is the hardest-won knowledge in the app, reverse-engineered against a real Apple TV. The Lounge
+back channel behaves nothing like a normal long-poll, and getting it wrong produces subtle "flicker"
+and false "nothing playing" bugs. **Read this before touching status.**
+
+**What the back channel actually does (measured, not assumed):**
+- You read events via a **GET** on `/api/lounge/bc/bind` (`RID=rpc`, `TYPE=xmlhttp`). It is **NOT** a
+  held-open stream: the server sends **one short batch and closes the connection in ~0.5s**
+  (`endedBy: server_close`), even mid-playback. To keep catching events you must **reconnect
+  repeatedly** — `fetchNowPlayingBatch` loops quick reconnects within `TOTAL_BUDGET_MS` (~8s).
+- Between/without events the server sends **`noop` heartbeats** and nothing else.
+- **Steady-state playback emits NO events at all.** A 20s continuous-reconnect trace during untouched
+  playback saw 15 reconnects, all `noop`, zero real events. The TV emits playback events **only on
+  transitions**: play, pause, seek, video load, stop.
+- Playback events are **`onStateChange`** (carries `currentTime`, `duration`, `state`) and, once at
+  load, **`nowPlaying`** (carries `videoId`; the real TV did **not** send a title). `onStateChange`
+  does **NOT** carry `videoId`/title — so even right after a pause/resume you get position+state but
+  no videoId, and during steady playback you usually get nothing.
+- Lounge `state` codes: `-1` unstarted, `0` ended, `1` playing, `2` paused, `3` buffering, `5` cued.
+- Batches also carry unrelated events (`onHasPreviousNextChanged`, `onAudioTrackListChanged`, …) with
+  no playback info — don't treat "got some event" as "got a status".
+
+**The reader's contract — a THREE-way result (`parseNowPlayingStatus`):**
+- `now_playing` — a play/pause/buffer/cue state, with `positionSeconds` + `durationSeconds`, plus
+  `videoId`/`title` carried from a `nowPlaying` event in the same batch if one is present.
+- `stopped` — an explicit ended/unstarted state (`0`/`-1`). Playback really stopped.
+- `no_update` — **no playback event caught this probe.** This is the normal steady-playback result,
+  and also what any connection failure/timeout maps to. **The caller MUST retain its last known state
+  on `no_update`.** Conflating `no_update` with "nothing playing" is THE flicker bug — don't.
+
+**Consequences the UI must honor (see `components/NowPlayingBar.tsx`):**
+- **Position is extrapolated locally.** The TV gives a position *anchor* only at transitions; between
+  them the client advances a local timer (`timeEstimateRef`, ticked ~500ms) and re-anchors from
+  `positionSeconds` whenever a `now_playing` arrives or the user issues a command. It can drift on
+  un-signaled stalls/ads; it self-corrects at the next transition or user seek. This is also how the
+  scrubber and Skip ±10s compute an absolute target.
+- **Title/thumbnail come from the app's own feed**, keyed by the `videoId` the app told the TV to
+  play (`currentVideoId` → `videosById` in `app/page.tsx`) — NOT from status (status `videoId` is
+  usually null). Thumbnail falls back to `i.ytimg.com/vi/<id>/mqdefault.jpg` for a video not in feed.
+- **Visibility:** show the bar on `now_playing`, retain on `no_update`, hide on `stopped`.
+
+**Isolation guarantee — why this can't break casting:** the status reader is a **pure GET reader**.
+It never POSTs to the bind forward channel, so it **never touches the `ofs` counter** the commands
+depend on. That is deliberate. If you ever want the true current state on demand (e.g. the videoId of
+a video started on the TV itself, or a cold-start snapshot), the safe way is a single `getNowPlaying`
+request **threaded through the same client-held `ofs`/`rid` counter the commands use** — never a
+background poller that writes `ofs` independently, which would reintroduce the "stale ofs → silently
+dropped" failure and break Play/Pause/Seek. Option 1 (transition-driven + local extrapolation) was
+chosen over a continuous `getNowPlaying` poll for exactly this reason; the door to an on-demand
+refresh is intentionally left open in `status.ts`'s comments.
+
+**Two status routes exist — don't confuse them:**
+- `app/api/tv/nowplaying/route.ts` → `lib/lounge/status.ts` — **the current source of truth. Use this.**
+- `app/api/tv/status/route.ts` → `getNowPlayingStatus()` in `lib/lounge/client.ts` — the **legacy**
+  Phase-5 probe the old RemoteBar used. **Unused** since RemoteBar was removed; left in place rather
+  than deleting fragile Lounge code unprompted. Treat as dead; prefer `/nowplaying`.
+
+A temporary debug page at `app/debug/now-playing/page.tsx` (not linked from the app) polls
+`/api/tv/nowplaying` and dumps the parsed + raw values — keep it for re-diagnosing the protocol if
+YouTube changes it.
 
 ## Critical constraints / gotchas
 
@@ -104,13 +169,26 @@ active bind-session fields) live in the browser's `localStorage` via `lib/storag
   the protocol. If Queue Next ever looks like it succeeds but nothing happens on the TV, suspect the
   command name/params first — that's the same "200 OK, silently dropped" failure mode as a stale
   `ofs`, just a different cause. Keep fixes isolated to that one function.
+- **Now-playing status: `no_update` means "retain", not "nothing playing"; the reader is GET-only.**
+  Full protocol findings are in the "Now-playing status" architecture subsection above. The two
+  load-bearing rules: (1) a probe that catches no event returns `no_update` and the UI must keep its
+  last known state — treating it as "stopped" is the flicker bug we fought hard; (2) `lib/lounge/status.ts`
+  is a pure GET reader that never touches the `ofs` counter, so it cannot break casting — keep it that
+  way (no `getNowPlaying` background poller). If status "works but is wrong," suspect these two first.
+- **The now-playing bar (`components/NowPlayingBar.tsx`) reuses commands and status; it adds no
+  Lounge logic.** Every button (play/pause/resume, skip ±10s and the scrubber via `seek`, next) calls
+  the page's `sendTvCommand` → `/api/tv/command`; it polls `/api/tv/nowplaying`. It replaced the old
+  `RemoteBar.tsx` (deleted) so there is exactly ONE bottom bar. Keep new playback UI here rather than
+  scattering command/status calls elsewhere.
 - **Debate Companion (`lib/chapters.ts`, `app/api/chapters/route.ts`, `components/DebateCompanion.tsx`)
-  is additive-only.** It reuses the existing `seekTo` Lounge command as-is — `seekTo` already takes
-  an absolute time in seconds, so no new Lounge surface was added for it — and fetches
+  is additive-only, and now lives inside the now-playing view.** It reuses the existing `seekTo`
+  Lounge command as-is (absolute seconds, so no new Lounge surface) and fetches
   `videos.list?part=snippet` directly with `YOUTUBE_API_KEY` rather than importing `lib/youtube.ts`,
-  so the feed code stays untouched. Do not modify `lib/lounge/`, `app/api/tv/command/route.ts`,
+  so the feed code stays untouched. As of the now-playing phase it is rendered by
+  `NowPlayingBar`'s expanded view, keyed to the currently-playing video — NOT by the feed cards
+  (`VideoCard` is a plain card again). Do not modify `lib/lounge/`, `app/api/tv/command/route.ts`,
   `lib/youtube.ts`, or `app/api/feed/route.ts` to extend this feature — add to the Debate Companion
-  files themselves, or add new files alongside them.
+  files themselves, or new files alongside them.
 - **YouTube Data API quota = 10,000 units/day (default).** Budget it:
   - Recent uploads: get the channel's **uploads playlist** via `channels.list` (1 unit) then
     `playlistItems.list` (1 unit / 50 items). **Do NOT use `search.list` for uploads** — it costs
@@ -130,29 +208,35 @@ active bind-session fields) live in the browser's `localStorage` via `lib/storag
 
 ```
 app/
-  layout.tsx
-  page.tsx                 # main feed / tabs
+  layout.tsx               # PWA meta + viewport-fit=cover (iOS safe-area insets for the bar)
+  globals.css              # Tailwind + base; also the now-playing scrubber's range-input CSS
+  page.tsx                 # main feed / tabs; tracks currentVideoId; builds videosById; mounts NowPlayingBar
+  debug/
+    now-playing/page.tsx   # TEMP debug page (not linked in app): dumps /api/tv/nowplaying parsed+raw
   api/
     feed/route.ts          # GET curated feeds (uploads + live) via Data API
     chapters/route.ts      # GET chapter list for a videoId (Debate Companion)
     tv/
       pair/route.ts        # POST { code } -> { screenId } ; pairs with TV
-      command/route.ts     # POST { screenId, token, command, videoId? }
-      status/route.ts      # (later) short-poll now-playing
+      command/route.ts     # POST { ...session, command, videoId?/seekSeconds? } (play/queue/pause/resume/next/seek)
+      nowplaying/route.ts  # GET now-playing status (Tier 1 reader) — SOURCE OF TRUTH
+      status/route.ts      # LEGACY Phase-5 now-playing probe; UNUSED since RemoteBar removed
 lib/
   channels.ts              # channel config (handles, tab groupings, emoji/labels)
   youtube.ts               # Data API helpers (uploads playlist, live lookup, caching)
   chapters.ts              # pure chapter-timestamp parser for Debate Companion (no network calls)
   lounge/
     client.ts              # Lounge pairing + bind + command encoding (server-only)
+    status.ts              # read-only now-playing bind-channel reader (server-only); GET-only, no ofs
   storage.ts               # localStorage helpers for screenId/token (client-only)
 components/
-  VideoCard.tsx            # thumbnail, title, channel, duration, Play Now / Queue Next
+  VideoCard.tsx            # thumbnail, title, channel, duration, Play Now / Queue Next (plain card)
   ChannelTabs.tsx
-  RemoteBar.tsx            # floating bottom remote (later phase)
+  NowPlayingBar.tsx        # Spotify-style bottom bar: mini + full-screen; play/pause, skip ±10s, next,
+                           #   drag-to-seek scrubber, and the DebateCompanion chapters. Replaced RemoteBar.
   PairingModal.tsx
   ConnectionStatus.tsx     # green "Connected to Apple TV" indicator
-  DebateCompanion.tsx      # chapter list for a selected video; taps seekTo the TV
+  DebateCompanion.tsx      # chapter list; rendered inside NowPlayingBar's expanded view; taps seekTo the TV
 public/
   manifest.json            # PWA
   icons/                   # PWA icons
@@ -163,7 +247,9 @@ public/
 - **TypeScript strict.** No `any` unless truly unavoidable, and comment why.
 - Server-only code (API keys, Lounge, Data API) must never be imported into client components.
   Mark client components with `"use client"` only when they need interactivity.
-- Tailwind utility classes in JSX; no separate `.css` files beyond `globals.css`.
+- Tailwind utility classes in JSX; no separate `.css` files beyond `globals.css`. (The only
+  hand-written CSS is the now-playing scrubber's range-input pseudo-elements in `globals.css` —
+  `::-webkit-slider-thumb` etc. can't be expressed as Tailwind utilities.)
 - Keep components small and single-purpose. Feed logic lives in `lib/`, not in components.
 - Handle loading and error states explicitly for every network call — this app is used by someone
   who won't debug a blank screen. Show a friendly retry.

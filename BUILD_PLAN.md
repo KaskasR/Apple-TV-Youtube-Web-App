@@ -17,9 +17,12 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phase 4 done (VideoCard, PairingModal, ConnectionStatus, Queue Next, 18px base
-type). Persistent TV pairing was pulled forward into this phase. Phase 5 (floating remote control
-bar) is next.**
+**Current status: Phases 0–9 done and deployed.** The app has curated feeds + category tabs + live
+badges, persistent TV pairing with tiered reconnect, Play Now / Queue Next, a PWA install, a
+read-only now-playing status reader, and a Spotify-style now-playing bar (mini + full-screen:
+play/pause, skip ±10s, next, drag-to-seek scrubber, and the Debate Companion chapter list). **Phase
+10 (Hardening) is the remaining planned work.** An optional Debate Companion Tier 2 (AI topic
+grouping / transcript summaries) is out of scope until explicitly requested.
 
 ---
 
@@ -155,7 +158,7 @@ Commit after the UI feels right on your phone.
 
 ---
 
-## Phase 5 — Floating remote control bar
+## Phase 5 — Floating remote control bar ✅ done (its RemoteBar was later replaced by NowPlayingBar in Phase 9)
 
 **Goal:** A collapsible bottom bar: play/pause, skip +/-10s, next in queue, and the current video
 title. Start with the buttons that are just "send a command" (easy); add now-playing status carefully.
@@ -177,7 +180,7 @@ Commit when the remote controls the TV reliably.
 
 ---
 
-## Phase 6 — PWA (add to home screen)
+## Phase 6 — PWA (add to home screen) ✅ done
 
 **Goal:** Make it installable to the iPhone/iPad home screen so it opens like an app, full-screen.
 
@@ -195,7 +198,7 @@ Test the actual 'Add to Home Screen' flow on the phone. Commit.
 
 ---
 
-## Phase 7 — Debate Companion
+## Phase 7 — Debate Companion ✅ done
 
 **Goal:** Give the chapter/timestamp markers already in many videos' descriptions (common on
 debate, news, and panel-show uploads) a senior-friendly UI: parse them and let the user tap a
@@ -216,13 +219,83 @@ a video's thumbnail/title (a small addition to `VideoCard.tsx`) selects it and m
 `lib/youtube.ts`, or `app/api/feed/route.ts` were modified — `seekTo` already takes an absolute
 time in seconds, so no new Lounge surface was needed.
 
+**Relocated in Phase 9:** the chapters were originally wired into the feed (tapping a `VideoCard`
+selected it and showed the list beneath). That feed wiring was removed — `VideoCard` is a plain card
+again — and `DebateCompanion` now renders inside the now-playing bar's expanded view, keyed to the
+currently-playing video. The component, `lib/chapters.ts`, and `app/api/chapters/route.ts` are
+unchanged; only where it's mounted changed.
+
 **Out of scope for now (optional future Tier 2):** AI-assisted topic grouping and transcript
 summaries. That would need an `ANTHROPIC_API_KEY` and an unofficial YouTube transcript-fetching
 library, both bigger asks than this phase — don't start it until explicitly requested.
 
 ---
 
-## Phase 8 — Hardening (do this once it's in daily use)
+## Phase 8 — Now-playing status reader (Tier 1, read-only) ✅ done
+
+**Goal:** A server-side reader that reports what the TV is currently doing (playing/paused, position,
+duration) so the UI can show a live now-playing bar — **without** a persistent listener
+(serverless-safe) and **without** touching the fragile command path.
+
+**Definition of done:** `GET /api/tv/nowplaying` returns a status the UI can trust — `now_playing`
+(with position/duration), `stopped`, or `no_update` — never hangs, never throws, and never interferes
+with Play/Pause/Seek. Verified on the real TV, including pause/resume from the physical Apple TV remote.
+
+**What shipped:** `lib/lounge/status.ts` (a pure GET-only bind-channel reader) and
+`app/api/tv/nowplaying/route.ts`, plus a temporary debug page `app/debug/now-playing/page.tsx` (not
+linked from the app) that dumps the parsed + raw values.
+
+**Hard-won protocol findings (this is why it took real investigation — full detail lives in CLAUDE.md's
+"Now-playing status" subsection):**
+- The Lounge back channel is **not** a long-poll — the server sends one short batch and **closes in
+  ~0.5s**, so the reader must **reconnect repeatedly** within a bounded ~8s budget.
+- **Steady-state playback emits NO events**; the TV emits only on **transitions** (play/pause/seek/
+  load/stop). A probe that catches nothing therefore means **"no change" (`no_update`), NOT "nothing
+  playing"** — conflating those is the flicker bug.
+- `onStateChange` carries position/duration/state but **never videoId/title**; videoId rides only the
+  one-time `nowPlaying` event. So the UI resolves title/thumbnail from the app's own feed.
+- The reader is **GET-only and never touches the bind `ofs` counter**, so it cannot break casting.
+
+**Out of scope (deliberately):** an active `getNowPlaying` query (would give live steady-state position
++ videoId on demand) — it's a forward-channel POST that contends with the command `ofs` counter, so
+it's only safe as a *single on-demand* request threaded through the client's counter, never a
+background poller. Left as a documented future option (see `status.ts` comments / CLAUDE.md).
+
+---
+
+## Phase 9 — Spotify-style now-playing bar (+ scrubber; chapters relocated) ✅ done
+
+**Goal:** Replace the old floating RemoteBar popup with a single Spotify-style now-playing bar — a
+collapsed mini-bar and a full-screen expanded view — driven by the Phase 8 status reader and the
+existing commands.
+
+**Definition of done:** Exactly **one** bottom bar. Collapsed: thumbnail + title + channel + a
+play/pause button whose icon reflects the **actual reported** play state (a physical-remote pause
+flips it); tapping elsewhere opens the full-screen view. Expanded: large artwork, title/channel, a
+**drag-to-seek scrubber** with time labels, controls (skip back 10s, play/pause, skip forward 10s,
+next), the chapter list, and chevron/swipe-down to dismiss. The bar shows only while something is
+playing and hides on stop; it never covers the feed when hidden. Respects iOS safe-area insets.
+
+**What shipped:** `components/NowPlayingBar.tsx` (new), replacing `components/RemoteBar.tsx` (deleted).
+It polls `/api/tv/nowplaying` and reuses `sendTvCommand` → `/api/tv/command` for **every** button —
+no new remote logic. `app/page.tsx` tracks `currentVideoId` (set on Play Now) and passes a
+`videosById` metadata map so the bar shows title/channel/thumbnail (status videoId is usually null).
+The scrubber's range-input styling lives in `app/globals.css`. Position advances via a local ~500ms
+tick over the Phase 8 extrapolation, re-anchored at transitions and on user commands (so the scrubber
+and Skip ±10s can compute an absolute `seek` target). The **Debate Companion chapters moved here**
+from the feed (see Phase 7's relocation note).
+
+**Reuse guarantees:** no changes to `lib/lounge/client.ts`, `app/api/tv/command/route.ts`,
+`lib/lounge/status.ts`, `app/api/tv/nowplaying/route.ts`, `lib/youtube.ts`, or the feed. Every control
+maps to an existing command; the scrubber and Skip ±10s use `seek` with an absolute target.
+
+**Known, by-design caveat:** between transitions the scrubber position is locally extrapolated, so it
+can drift on un-signaled TV stalls/ads; it self-corrects at the next transition or user seek. This is
+the Option-1 tradeoff chosen in Phase 8 to keep the status reader from endangering casting commands.
+
+---
+
+## Phase 10 — Hardening (do this once it's in daily use)
 
 **Goal:** Make it robust for a non-technical user: friendly errors, token-expiry recovery, quota
 resilience, empty/failed feed handling.
