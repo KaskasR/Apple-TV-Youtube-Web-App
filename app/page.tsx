@@ -4,8 +4,8 @@ import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import DebateCompanion from "@/components/DebateCompanion";
+import NowPlayingBar, { type RemoteCommand, type TrackMeta } from "@/components/NowPlayingBar";
 import PairingModal from "@/components/PairingModal";
-import RemoteBar, { type RemoteCommand } from "@/components/RemoteBar";
 import VideoCard from "@/components/VideoCard";
 import { TABS, UNIFIED_TAB_ID } from "@/lib/channels";
 import { clearSession, loadSession, saveSession } from "@/lib/storage";
@@ -55,6 +55,8 @@ export default function Home() {
   const [feedRequest, setFeedRequest] = useState(0);
   const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  // The videoId the app last told the TV to play — the NowPlayingBar's reliable content key.
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
 
   useEffect(() => {
     // localStorage isn't available during SSR, so this can't be computed at render time —
@@ -166,6 +168,9 @@ export default function Home() {
     setPlayError("");
     try {
       await sendTvCommand(command, { videoId });
+      // Play Now makes this the current video for the now-playing bar (Queue Next doesn't change
+      // what's playing right now).
+      if (command === "play") setCurrentVideoId(videoId);
     } catch (err) {
       setPlayError(err instanceof Error ? err.message : "Command failed.");
     } finally {
@@ -173,10 +178,16 @@ export default function Home() {
     }
   }
 
-  const videoTitlesById = useMemo(() => {
-    const map = new Map<string, string>();
+  const videosById = useMemo(() => {
+    const map = new Map<string, TrackMeta>();
     if (feedState.status === "loaded") {
-      for (const video of feedState.videos) map.set(video.videoId, video.title);
+      for (const video of feedState.videos) {
+        map.set(video.videoId, {
+          title: video.title,
+          channelTitle: video.channelTitle,
+          thumbnailUrl: video.thumbnailUrl,
+        });
+      }
     }
     return map;
   }, [feedState]);
@@ -252,15 +263,14 @@ export default function Home() {
       )}
 
       {pairState.status === "paired" && (
-        <RemoteBar
+        <NowPlayingBar
           session={{
             token: pairState.token,
             sid: pairState.sid,
             gsessionid: pairState.gsessionid,
-            rid: pairState.rid,
-            nextOfs: pairState.nextOfs,
           }}
-          videoTitlesById={videoTitlesById}
+          currentVideoId={currentVideoId}
+          videosById={videosById}
           onCommand={(command, extra) => sendTvCommand(command, extra)}
         />
       )}
