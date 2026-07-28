@@ -17,16 +17,30 @@ const TOTAL_BUDGET_MS = 8000;
 // real round trip, just a doomed request that adds noise to the error message.
 const MIN_ATTEMPT_MS = 800;
 
+// Three-way result — the distinction matters, and conflating the last two was the core "flicker
+// back to nothing playing" bug. Against the real TV, steady-state playback emits NO events at all
+// (confirmed by a 20s trace: 15 reconnects, all noop, zero events); the TV only emits on
+// transitions (play/pause/seek/load/stop). So a probe that catches nothing does NOT mean nothing
+// is playing — it means "no change, keep showing what you had". Only an explicit ended/unstarted
+// state means playback actually stopped.
 export type NowPlayingStatus =
-  | { kind: "nothing_playing" }
+  // No playback event observed this probe. The caller should RETAIN its last known state (and,
+  // for a video it started itself, extrapolate position with a local timer) — do not treat this
+  // as "nothing is playing".
+  | { kind: "no_update" }
+  // The TV explicitly reported ended/unstarted (state 0 / -1) — playback really did stop.
+  | { kind: "stopped" }
   | {
       kind: "now_playing";
-      // Real onStateChange payloads observed against the live TV don't include videoId at all
-      // (only currentTime/duration/state/etc.) — only some other event may ever carry it, so
-      // this stays nullable rather than gating the whole result on its presence.
+      // videoId/title ride only the one-time "nowPlaying" event (fired at load), never the
+      // routine "onStateChange" updates — confirmed against the real TV. So during steady
+      // playback these are usually null here; the UI resolves the title from its own feed list
+      // (the videoId it told the TV to play), the way RemoteBar already does.
       videoId: string | null;
       title: string | null;
       isPlaying: boolean;
+      // The TV only hands us a position ANCHOR at each transition — there are no periodic
+      // position updates during steady playback. Between anchors the UI extrapolates locally.
       positionSeconds: number | null;
       durationSeconds: number | null;
     };
@@ -98,14 +112,15 @@ function toNumber(value: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// Pure parser: given the raw decoded batch text from the bind channel's listen response, finds
-// the most recent nowPlaying/onStateChange event and returns a clear "now_playing" or
-// "nothing_playing" result. A single batch can contain several state updates (e.g. a
-// buffering->playing transition) — this takes the LAST relevant one for state/position, since
-// that's current, not the first. videoId/title only arrive on a "nowPlaying" event (confirmed
-// against the real TV — routine "onStateChange" position updates don't carry them), so those are
-// carried forward within the batch rather than being wiped out by a later onStateChange that
-// simply doesn't repeat them. Never throws — worst case it falls back to "nothing_playing".
+// Pure parser: given the raw decoded batch text from the bind channel's listen response, returns
+// the current playback status. A batch with no nowPlaying/onStateChange event yields "no_update"
+// (NOT "stopped") — that's the fix for the flicker bug, since steady playback legitimately emits
+// no events. A single batch can contain several state updates (e.g. a buffering->playing
+// transition) — this takes the LAST relevant one for state/position, since that's current, not
+// the first. videoId/title only arrive on a "nowPlaying" event (confirmed against the real TV —
+// routine "onStateChange" updates don't carry them), so those are carried forward within the
+// batch rather than being wiped out by a later onStateChange that doesn't repeat them. Never
+// throws — worst case it falls back to "no_update".
 export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
   const payloads = parseBindChunks(raw);
   let latest: NowPlayingStatus | null = null;
@@ -120,11 +135,14 @@ export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
     knownTitle = fields.title || fields.videoTitle || knownTitle;
 
     const stateCode = fields.state;
+    // An event with no state field tells us nothing about play/stop — let it contribute its
+    // videoId/title (carried above) but don't let it set the state result.
+    if (stateCode === undefined) continue;
 
     // Lounge state codes (reverse-engineered): -1 unstarted, 0 ended, 1 playing, 2 paused,
-    // 3 buffering, 5 cued. Treat -1/0/missing as "nothing meaningfully playing".
-    if (stateCode === undefined || stateCode === "-1" || stateCode === "0") {
-      latest = { kind: "nothing_playing" };
+    // 3 buffering, 5 cued. Only 0/-1 mean playback actually stopped.
+    if (stateCode === "-1" || stateCode === "0") {
+      latest = { kind: "stopped" };
       continue;
     }
 
@@ -138,7 +156,7 @@ export function parseNowPlayingStatus(raw: string): NowPlayingStatus {
     };
   }
 
-  return latest ?? { kind: "nothing_playing" };
+  return latest ?? { kind: "no_update" };
 }
 
 function statusQueryParams(loungeToken: string, session: Pick<BindSession, "sid" | "gsessionid">): URLSearchParams {
@@ -263,18 +281,27 @@ export async function fetchNowPlayingBatch(
   return lastResult;
 }
 
-// Composes fetchNowPlayingBatch + parseNowPlayingStatus. Returns null only on a connection
-// failure/timeout (the TV/session is unreachable) — a legitimately idle TV returns
-// { kind: "nothing_playing" }, never null, so callers can tell the two apart.
+// Composes fetchNowPlayingBatch + parseNowPlayingStatus into a single NowPlayingStatus. On any
+// connection failure/timeout it returns { kind: "no_update" } rather than throwing or returning
+// null — an unreachable TV or an empty probe window should just leave the caller's last known
+// state intact, never blank the UI. (An explicit stop still comes back as { kind: "stopped" }.)
+//
+// NOTE for a future scrub-bar / cold-start refresh: this stays a pure GET-only reader — it never
+// POSTs to the forward channel, so it never touches the bind session's `ofs` counter and can't
+// interfere with the play/pause/seek commands. If you ever want the true current position on
+// demand (e.g. app cold-start while something's already playing), add a `getNowPlaying` request
+// threaded through the SAME client-held ofs/rid counter the commands use — do NOT add a
+// continuous background poller that writes ofs independently, which would risk the "stale ofs ->
+// silently dropped" failure mode that breaks casting commands.
 export async function readNowPlayingStatus(
   loungeToken: string,
   session: Pick<BindSession, "sid" | "gsessionid">
-): Promise<NowPlayingStatus | null> {
+): Promise<NowPlayingStatus> {
   const result = await fetchNowPlayingBatch(loungeToken, session);
-  if (!result.ok) return null;
+  if (!result.ok) return { kind: "no_update" };
   try {
     return parseNowPlayingStatus(result.raw);
   } catch {
-    return null;
+    return { kind: "no_update" };
   }
 }
