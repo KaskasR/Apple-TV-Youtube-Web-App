@@ -1,9 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import ChannelTabs from "@/components/ChannelTabs";
 import ConnectionStatus from "@/components/ConnectionStatus";
-import DebateCompanion from "@/components/DebateCompanion";
 import NowPlayingBar, { type RemoteCommand, type TrackMeta } from "@/components/NowPlayingBar";
 import PairingModal from "@/components/PairingModal";
 import VideoCard from "@/components/VideoCard";
@@ -54,7 +53,6 @@ export default function Home() {
   const [playError, setPlayError] = useState("");
   const [feedRequest, setFeedRequest] = useState(0);
   const [activeTabId, setActiveTabId] = useState(TAB_OPTIONS[0].id);
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   // The videoId the app last told the TV to play — the NowPlayingBar's reliable content key.
   const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
 
@@ -235,27 +233,14 @@ export default function Home() {
           {feedState.status === "loaded" && feedState.videos.length > 0 && (
             <ul className="flex flex-col gap-4">
               {feedState.videos.map((video) => (
-                <Fragment key={video.videoId}>
-                  <VideoCard
-                    video={video}
-                    onPlay={() => handleCommand(video.videoId, "play")}
-                    onQueue={() => handleCommand(video.videoId, "queue")}
-                    isPlaying={playingVideoId === video.videoId}
-                    isQueuing={queueingVideoId === video.videoId}
-                    isSelected={selectedVideoId === video.videoId}
-                    onSelect={() =>
-                      setSelectedVideoId((id) => (id === video.videoId ? null : video.videoId))
-                    }
-                  />
-                  {selectedVideoId === video.videoId && (
-                    <li>
-                      <DebateCompanion
-                        videoId={video.videoId}
-                        onSeek={(seconds) => sendTvCommand("seek", { seekSeconds: seconds })}
-                      />
-                    </li>
-                  )}
-                </Fragment>
+                <VideoCard
+                  key={video.videoId}
+                  video={video}
+                  onPlay={() => handleCommand(video.videoId, "play")}
+                  onQueue={() => handleCommand(video.videoId, "queue")}
+                  isPlaying={playingVideoId === video.videoId}
+                  isQueuing={queueingVideoId === video.videoId}
+                />
               ))}
             </ul>
           )}

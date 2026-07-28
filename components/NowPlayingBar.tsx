@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, FastForward, Pause, Play, SkipForward } from "lucide-react";
 import { formatTimestamp } from "@/lib/chapters";
+import DebateCompanion from "@/components/DebateCompanion";
 
 // Reused command vocabulary — these map 1:1 to the existing command functions behind
 // /api/tv/command (pause/resume/next/seek). This component adds NO new remote logic; every
@@ -299,12 +300,13 @@ export default function NowPlayingBar({
           <span className="h-14 w-14" aria-hidden />
         </div>
 
-        <div className="flex flex-1 flex-col items-center justify-center gap-10 px-8 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
+        <div className="flex-1 overflow-y-auto px-8 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
+          <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-8 py-6">
           {thumbnail && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={thumbnail} alt="" className="aspect-video w-full max-w-sm rounded-2xl object-cover shadow-2xl" />
+            <img src={thumbnail} alt="" className="aspect-video w-full rounded-2xl object-cover shadow-2xl" />
           )}
-          <div className="w-full max-w-sm text-center">
+          <div className="w-full text-center">
             <p className="text-2xl font-bold text-white">{title}</p>
             {channel && <p className="mt-2 text-lg text-white/60">{channel}</p>}
           </div>
@@ -312,7 +314,7 @@ export default function NowPlayingBar({
           {/* Scrubber — drag to seek. Reuses the existing seek command; only shown once the TV has
               reported a duration. */}
           {hasDuration && (
-            <div className="w-full max-w-sm">
+            <div className="w-full">
               <input
                 type="range"
                 className="nowplaying-scrubber w-full"
@@ -361,6 +363,19 @@ export default function NowPlayingBar({
             >
               <SkipForward className="h-8 w-8" />
             </button>
+          </div>
+
+          {/* Chapters (moved here from the feed) — jump the TV to a timestamp via the existing
+              seek command. Renders nothing when the video has no chapters. Mounted only while
+              expanded so we don't fetch chapters for a video the user never opens. */}
+          {expanded && (
+            <div className="w-full">
+              <DebateCompanion
+                videoId={effectiveVideoId}
+                onSeek={(seconds) => run("seek", { seekSeconds: Math.round(seconds) })}
+              />
+            </div>
+          )}
           </div>
         </div>
       </div>
