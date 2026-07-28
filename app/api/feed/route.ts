@@ -1,24 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { TABS, UNIFIED_TAB_ID, getAllChannels, getTabById } from "@/lib/channels";
-import { getChannelFeed, type VideoSummary } from "@/lib/youtube";
+import { getChannelFeedById } from "@/lib/youtube";
 
+// One channel's recent uploads + live, by channelId (Your Channels page). Public data via the API
+// key — the channelId comes from the user's subscriptions list (/api/subscriptions).
 export async function GET(request: NextRequest) {
-  const tabId = request.nextUrl.searchParams.get("tab") ?? TABS[0].id;
-  const channels = tabId === UNIFIED_TAB_ID ? getAllChannels() : getTabById(tabId)?.channels;
-
-  if (!channels) {
-    return NextResponse.json({ error: `Unknown tab: ${tabId}` }, { status: 400 });
+  const channelId = request.nextUrl.searchParams.get("channelId");
+  if (!channelId) {
+    return NextResponse.json({ error: "Missing channelId." }, { status: 400 });
   }
 
   try {
-    const results = await Promise.all(channels.map((channel) => getChannelFeed(channel.handle)));
-    const videos: VideoSummary[] = results.flat().sort((a, b) => {
-      if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
-      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-    });
+    const videos = await getChannelFeedById(channelId);
     return NextResponse.json({ videos });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to load feed.";
+    const message = err instanceof Error ? err.message : "Failed to load channel.";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

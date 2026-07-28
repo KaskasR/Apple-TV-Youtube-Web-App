@@ -35,6 +35,9 @@ type NowPlayingBarProps = {
   currentVideoId: string | null;
   videosById: Map<string, TrackMeta>;
   onCommand: (command: RemoteCommand, extra?: { seekSeconds?: number }) => Promise<void>;
+  // Height (in rem) of the bottom nav below us — the collapsed mini-bar sits directly above it
+  // (Spotify-style). The expanded full-screen view still covers everything, nav included.
+  navHeightRem?: number;
 };
 
 const POLL_INTERVAL_MS = 4000;
@@ -66,6 +69,7 @@ export default function NowPlayingBar({
   currentVideoId,
   videosById,
   onCommand,
+  navHeightRem = 0,
 }: NowPlayingBarProps) {
   const [visible, setVisible] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -243,9 +247,12 @@ export default function NowPlayingBar({
 
   return (
     <>
-      {/* Collapsed mini-bar */}
+      {/* Collapsed mini-bar — sits directly above the bottom nav (navHeightRem) plus the safe-area. */}
       {!expanded && (
-        <div className="fixed inset-x-0 bottom-0 z-30 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+        <div
+          className="fixed inset-x-0 z-30 px-3"
+          style={{ bottom: `calc(env(safe-area-inset-bottom) + ${navHeightRem}rem + 0.5rem)` }}
+        >
           <div className="mx-auto max-w-md overflow-hidden rounded-2xl border border-white/10 bg-neutral-900 shadow-[0_8px_30px_rgba(0,0,0,0.6)]">
             <div className="flex items-center gap-3 p-3">
               <button

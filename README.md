@@ -1,31 +1,32 @@
 # TV Guide
 
-A curated YouTube TV guide + remote control, built for one senior/parent user watching on an
-Apple TV. Browse recent uploads and live streams from favorite channels on an iPhone/iPad, then
-tap a video to Play Now or Queue Next on the TV via YouTube's "Link with TV code" pairing.
+A YouTube TV guide + remote control, built for one senior/parent user watching on an Apple TV. On an
+iPhone/iPad, sign in with Google and browse your real subscriptions across a Spotify-style three-page
+shell — **Home** (all your subscriptions merged), **Your Channels** (pick one subscribed channel),
+and **Queued** — then tap a video to Play Now or Queue Next on the TV via YouTube's "Link with TV
+code" pairing. A Spotify-style now-playing bar (mini + full-screen, with a drag-to-seek scrubber and
+chapter jumps) controls playback.
 
 See [`CLAUDE.md`](./CLAUDE.md) for architecture, constraints, and conventions, and
-[`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phased build plan and current status.
+[`BUILD_PLAN.md`](./BUILD_PLAN.md) for the phased build plan and per-phase detail.
 
 ## Status
 
-- **Phase 0 — Skeleton + pipeline:** done. Blank Next.js app, deployed to Vercel.
-- **Phase 1 — Cast spike (Lounge API):** done. Pairing via TV code + `setPlaylist` casting works,
-  reusing one bind session across commands.
-- **Phase 2 — Real feed from one channel (Data API):** done. Real uploads from `@zeteo` render as a
-  list with working Play Now buttons; also fixed a bind-session bug where reused-session commands
-  were silently dropped (see the `ofs` gotcha in `CLAUDE.md`).
-- **Phase 3 — All channels, tabs, live badges:** done. News (`@zeteo`) and Sports
-  (`@volleyballworld`, `@RogerThatTennis`) tabs, plus a date-sorted Unified tab; live streams get a
-  red LIVE badge via a cached `search.list` check per channel.
-- **Persistent TV pairing** (pulled forward from Phase 4): done. The paired session lives in
-  `localStorage` (`lib/storage.ts`), so reloading the app no longer requires re-entering the TV
-  code; an expired lounge token is silently re-minted from the stored screen ID, and the pairing
-  form only reappears if the TV itself unlinks.
-- **Phase 4 — Senior-friendly UI polish:** done. Real `VideoCard`s (Play Now + Queue Next),
-  `PairingModal`, and a `ConnectionStatus` indicator; 18px base type. Queue Next's `addVideo`
-  Lounge command is confirmed working on the real TV.
-- **Phase 5 — Floating remote control bar:** next up.
+**Phases 0–9 + 11–13 done and deployed; Phase 10 (hardening) remains.** Highlights:
+
+- **Casting (Lounge API):** TV-code pairing + `setPlaylist`/`addVideo` (Play Now / Queue Next),
+  confirmed on the real Apple TV, with persistent pairing in `localStorage` and tiered token/session
+  reconnect (see the `ofs` and recovery gotchas in `CLAUDE.md`).
+- **Subscription-driven feeds (Phases 12–13):** signed-in via Google OAuth (`youtube.readonly`),
+  Home merges recent uploads across **all** your subscriptions and Your Channels picks one subscribed
+  channel (`?channelId=`); live streams get a red LIVE badge via a cached `search.list` check. Not
+  the recommendation algorithm (no stable API exists); the refresh token lives only in an encrypted
+  httpOnly cookie. Needs the `GOOGLE_OAUTH_*` / `OAUTH_TOKEN_SECRET` env vars.
+- **Now-playing:** a read-only, GET-only status reader (`/api/tv/nowplaying`) drives the Spotify-style
+  `NowPlayingBar` (play/pause, skip ±10s, next, drag-to-seek scrubber, Debate Companion chapters).
+- **App shell (Phase 11):** `BottomNav` with Home / Your Channels / Queued, logo-red accent
+  (`#EF4444`), and a session-only, auto-pruning queue mirror on the Queued page.
+- **PWA:** installable to the iOS home screen (manifest + icons + Apple meta tags).
 
 ## Getting started
 

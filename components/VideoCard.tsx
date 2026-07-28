@@ -1,4 +1,4 @@
-import { ListPlus, Play } from "lucide-react";
+import { ListPlus, Play, Trash2 } from "lucide-react";
 
 export type VideoCardVideo = {
   videoId: string;
@@ -12,46 +12,82 @@ export type VideoCardVideo = {
 type VideoCardProps = {
   video: VideoCardVideo;
   onPlay: () => void;
-  onQueue: () => void;
   isPlaying: boolean;
-  isQueuing: boolean;
+  // Queue Next is shown only when onQueue is provided (feed pages, not the Queued page).
+  onQueue?: () => void;
+  isQueuing?: boolean;
+  // Remove is shown only when onRemove is provided (the Queued page).
+  onRemove?: () => void;
 };
 
-export default function VideoCard({ video, onPlay, onQueue, isPlaying, isQueuing }: VideoCardProps) {
+export default function VideoCard({
+  video,
+  onPlay,
+  isPlaying,
+  onQueue,
+  isQueuing,
+  onRemove,
+}: VideoCardProps) {
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-white/15 p-3 text-left">
+    <li className="overflow-hidden rounded-2xl bg-neutral-900 shadow-lg shadow-black/40">
       {video.thumbnailUrl && (
         <div className="relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={video.thumbnailUrl} alt="" className="w-full rounded-md" />
-          {video.isLive && (
-            <span className="absolute left-2 top-2 rounded bg-red-600 px-2 py-1 text-xs font-bold text-white">
-              LIVE
+          <img src={video.thumbnailUrl} alt="" className="aspect-video w-full object-cover" />
+          {video.isLive ? (
+            <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 text-xs font-bold uppercase tracking-wide text-white">
+              <span className="h-2 w-2 rounded-full bg-white" />
+              Live
             </span>
+          ) : (
+            video.duration && (
+              <span className="absolute bottom-3 right-3 rounded-md bg-black/80 px-2 py-1 text-sm font-semibold text-white">
+                {video.duration}
+              </span>
+            )
           )}
         </div>
       )}
-      <p className="text-lg font-semibold text-white">{video.title}</p>
-      <p className="text-sm text-white/60">
-        {video.channelTitle}
-        {video.duration ? ` · ${video.duration}` : ""}
-      </p>
-      <button
-        onClick={onPlay}
-        disabled={isPlaying}
-        className="flex min-h-[56px] items-center justify-center gap-2 rounded-lg bg-white px-6 py-3 text-xl font-semibold text-black disabled:opacity-50"
-      >
-        <Play className="h-6 w-6" fill="currentColor" />
-        {isPlaying ? "Sending…" : "Play Now"}
-      </button>
-      <button
-        onClick={onQueue}
-        disabled={isQueuing}
-        className="flex min-h-[56px] items-center justify-center gap-2 rounded-lg border border-white/30 px-6 py-3 text-xl font-semibold text-white disabled:opacity-50"
-      >
-        <ListPlus className="h-6 w-6" />
-        {isQueuing ? "Sending…" : "Queue Next"}
-      </button>
+
+      <div className="flex flex-col gap-3 p-4 text-left">
+        <div>
+          <p className="text-lg font-semibold leading-snug text-white">{video.title}</p>
+          <p className="mt-1 text-sm text-white/50">{video.channelTitle}</p>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onPlay}
+            disabled={isPlaying}
+            aria-label="Play Now"
+            className="flex h-[56px] w-[56px] shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition active:scale-[0.98] disabled:opacity-50"
+          >
+            <Play className="h-6 w-6" fill="currentColor" />
+          </button>
+
+          {onQueue && (
+            <button
+              onClick={onQueue}
+              disabled={isQueuing}
+              aria-label="Queue Next"
+              className="flex min-h-[56px] flex-1 items-center justify-center gap-2 rounded-full border border-white/20 px-5 text-lg font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+            >
+              <ListPlus className="h-5 w-5" />
+              {isQueuing ? "Sending…" : "Queue Next"}
+            </button>
+          )}
+
+          {onRemove && (
+            <button
+              onClick={onRemove}
+              aria-label="Remove from queue"
+              className="flex min-h-[56px] w-[56px] items-center justify-center rounded-full border border-white/20 text-white/70 transition active:scale-[0.98]"
+            >
+              <Trash2 className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+      </div>
     </li>
   );
 }

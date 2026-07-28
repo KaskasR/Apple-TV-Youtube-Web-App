@@ -17,12 +17,16 @@ committed, so bugs can't pile up invisibly.
 Each phase below has a **Goal**, a **Definition of done**, and a **ready-to-paste prompt** for
 Claude Code. Paste the prompt, test the result, commit, then move on.
 
-**Current status: Phases 0–9 done and deployed.** The app has curated feeds + category tabs + live
-badges, persistent TV pairing with tiered reconnect, Play Now / Queue Next, a PWA install, a
-read-only now-playing status reader, and a Spotify-style now-playing bar (mini + full-screen:
-play/pause, skip ±10s, next, drag-to-seek scrubber, and the Debate Companion chapter list). **Phase
-10 (Hardening) is the remaining planned work.** An optional Debate Companion Tier 2 (AI topic
-grouping / transcript summaries) is out of scope until explicitly requested.
+**Current status: Phases 0–9 + 11–13 done and deployed.** The app has live badges, persistent TV
+pairing with tiered reconnect, Play Now / Queue Next, a PWA install, a read-only now-playing status
+reader, and a Spotify-style now-playing bar (mini + full-screen: play/pause, skip ±10s, next,
+drag-to-seek scrubber, and the Debate Companion chapter list). **Phase 11** reshaped the app shell
+into a Spotify-style layout (bottom nav; logo-red accent). **Phase 12** added his real YouTube
+subscriptions via Google OAuth. **Phase 13** made the whole app subscription-driven: the manual
+channel config was removed, Home became the unified subscriptions feed, and Your Channels became a
+picker over his subscribed channels. **Phase 10 (Hardening) is the remaining planned work** — it was
+intentionally left until after the redesign. An optional Debate Companion Tier 2 (AI topic grouping /
+transcript summaries) is out of scope until explicitly requested.
 
 ---
 
@@ -306,6 +310,117 @@ resilience, empty/failed feed handling.
 > auth error (only fall back to re-pairing if the screenId is dead); graceful handling when a feed
 > is empty or the Data API quota is exceeded (show a clear message, keep the last good data if
 > possible). Don't change working behavior — only add resilience around the edges."
+
+---
+
+## Phase 11 — Spotify-style app shell: bottom nav + three pages ✅ done (done ahead of Phase 10)
+
+**Goal:** Replace the single-feed-with-top-tabs layout with a modern, Spotify-like structure: a
+**bottom tab bar** (below the now-playing mini-bar) with three pages, plus a visual refresh. Driven
+by the primary user being more comfortable with technology than the original brief assumed — sleeker,
+still large-target and high-contrast.
+
+**Definition of done:** A bottom nav switches between **Home** (all channels unified), **Your
+Channels** (a dropdown to pick one channel → that channel's videos), and **Queued** (the videos
+queued from the app this session). The now-playing bar is unchanged in look and sits above the nav.
+The accent color matches the app logo's red.
+
+**What shipped:**
+- `components/BottomNav.tsx` (new): fixed bottom tab bar, Home / Your Channels / Queued, red active
+  tab + a Queued count badge. Exports `NAV_HEIGHT_REM` so `NowPlayingBar`'s mini-bar can float
+  directly above it (new `navHeightRem` prop — the only change to that component's look).
+- `components/ChannelPicker.tsx` (new): a big native `<select>` for the Your Channels page.
+- `app/api/feed/route.ts`: added `?channel=@handle` (single channel) alongside the existing
+  `?tab=`/`unified` grouping. No Lounge changes.
+- `lib/channels.ts`: per-channel `emoji`, plus `getChannelByHandle()`.
+- **Queued page = in-memory, session-only mirror + auto-prune** (deliberate design decision — the
+  Lounge protocol can't reliably read the TV's real queue, so a persisted list would just go stale).
+  "Queue Next" appends; Play Now prunes; reload clears. Documented honestly in the empty state and in
+  CLAUDE.md's "Navigation & pages" gotcha.
+- `components/VideoCard.tsx`: sleeker card (full-bleed 16:9 thumbnail, duration pill, pulsing-dot LIVE
+  badge); Play is now an **icon-only red circle**, Queue Next fills the row; optional Remove button on
+  the Queued page.
+- Accent color swapped from a placeholder amber to the **logo red `#EF4444` (Tailwind `red-500`)**,
+  sampled from the play triangle in `public/icons/icon-512.png`. LIVE badge kept at `red-600`.
+- `components/ConnectionStatus.tsx`: added a `compact` icon-only variant for the per-page header.
+- `app/page.tsx`: rewritten shell — owns `activePage`, `selectedChannel`, the `queued` list,
+  `currentVideoId`, and an accumulating `metaMap` (so the now-playing bar keeps title/thumbnail after
+  switching pages). `components/ChannelTabs.tsx` is now unused/legacy (left in place, not deleted).
+
+**Reuse guarantees:** no changes to `lib/lounge/*`, `app/api/tv/*`, `lib/youtube.ts`, or the Debate
+Companion. The only backend change was the feed route's additive `?channel=` param.
+
+---
+
+## Phase 12 — Explore page: his real subscriptions via Google OAuth ✅ done
+
+**Goal:** An Explore tab like the YouTube TV Home — content beyond the hand-picked channels.
+
+**Feasibility finding (why it's subscriptions, not "recommendations"):** YouTube has **no stable API
+for personalized recommendations** — the old personalized home feed, related-videos, and watch-history
+API access were all removed. The only way to get his true algorithmic recs is scraping the internal
+InnerTube API with his logged-in Google cookies, which violates ToS, risks his account, and breaks
+without notice. So Explore shows the honest, stable alternative: **recent uploads from the channels he
+actually subscribes to**, via Google OAuth (`youtube.readonly`).
+
+**Definition of done:** An Explore tab shows a "Connect YouTube" screen when signed out; after a
+one-time Google login it lists fresh videos from his subscriptions, each with the same Play Now /
+Queue Next behavior as Home; a Disconnect control returns to the Connect screen. Casting untouched.
+
+**What shipped:**
+- `lib/googleAuth.ts` (new, server-only): OAuth auth-URL / code-exchange / token-refresh via plain
+  `fetch`; AES-256-GCM encrypt/decrypt of the refresh token (`node:crypto`); `getAccessToken(request)`.
+  **No new npm dependency.**
+- `app/api/auth/youtube/{login,callback,logout}/route.ts`: the OAuth flow. The refresh token is stored
+  **only** as an encrypted, httpOnly cookie (`yt_oauth`) — never localStorage / never `NEXT_PUBLIC`.
+- `lib/youtube.ts`: `youtubeGet` now takes an optional OAuth token (Bearer + **`cache: "no-store"`** for
+  private data — never Next's shared cache); `getSubscriptionsFeed()` fans out `subscriptions.list` →
+  batched `channels.list` → `playlistItems.list` per channel (capped by `SUBS_CHANNEL_LIMIT`), reusing
+  the existing duration/mapping helpers (`fetchDurations` now batches in 50s).
+- `app/api/explore/route.ts`: `{ connected:false }` (401) when signed out, else `{ connected:true, videos }`.
+- `components/BottomNav.tsx`: 4th "Explore" tab (relabeled "Your Channels" → "Channels" to fit).
+- `app/page.tsx`: `exploreState` (connection + videos), the Connect / list / Disconnect UI, and
+  handling the `?explore=connected` OAuth return.
+
+**Operational note:** the OAuth consent screen is published to **Production (unverified)** — a one-time
+"unverified app" warning, but a durable refresh token (avoids the 7-day expiry of "Testing" mode).
+Requires `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `OAUTH_TOKEN_SECRET` (see `.env.example`)
+locally and in Vercel, plus the prod redirect URI registered in the Google console.
+
+**Reuse guarantees:** no changes to `lib/lounge/*` or `app/api/tv/*` — casting is untouched.
+
+---
+
+## Phase 13 — Subscription-driven app: Home = subscriptions, Your Channels = subscribed channels ✅ done
+
+**Goal:** Retire the hand-picked manual channels entirely. Make Home the unified subscriptions feed
+(what Phase 12's "Explore" was), and make Your Channels a picker over the user's *subscribed*
+channels instead of the manual config.
+
+**Definition of done:** Three tabs — Home (all subscriptions merged, newest-first), Your Channels
+(dropdown of subscribed channels → that channel's uploads), Queued. Both Home and Your Channels show
+the Connect screen when signed out. No manual channel config remains. Casting untouched.
+
+**What shipped:**
+- **Deleted** `lib/channels.ts`, `components/ChannelTabs.tsx`, and `app/api/explore/route.ts`; the
+  old handle-based `getChannelFeed`/`resolveChannel` were removed.
+- `lib/youtube.ts`: `getSubscribedChannels()` (paginated subscriptions in YouTube's order, bounded by
+  `SUBS_MAX_PAGES`), `getSubscriptionsFeed()` now spans **all** subscriptions (no channel cap, per the
+  owner's choice) and stays crash-proof via `Promise.allSettled`, and `getChannelFeedById()` fetches
+  one channel's uploads + live by channelId (public/API-key, cacheable).
+- Routes: `app/api/subscriptions` (channel list + connection check), `app/api/subscriptions/feed`
+  (Home), and `app/api/feed?channelId=` (one channel). OAuth callback now returns to `/?connected=1`.
+- `components/BottomNav.tsx` back to 3 tabs; `ChannelPicker.tsx` generalized to `{id,label}` options;
+  `components/ConnectYouTube.tsx` extracted (shared by Home + Your Channels when signed out).
+- `app/page.tsx` rewritten: `subsState` (connection + channel list) gates Home/Your Channels behind
+  the Connect screen; `homeFeed` is fetched once per connect and cached in state (quota-friendly);
+  `channelFeed` follows the selected channel; a header "Sign out" disconnects.
+
+**Quota note:** Home now fans out one `playlistItems.list` per subscription (owner chose completeness
+over a channel cap). The client caches Home in React state (fetched once per connect, not per tab
+switch) to keep this affordable — don't move Home fetching to a per-tab/per-render trigger.
+
+**Reuse guarantees:** no changes to `lib/lounge/*` or `app/api/tv/*` — casting is untouched.
 
 ---
 
