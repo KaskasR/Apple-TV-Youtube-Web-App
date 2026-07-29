@@ -40,10 +40,20 @@ Copy `.env.example` to `.env.local` and fill in `YOUTUBE_API_KEY` (needed for th
 
 ## Deploy
 
+Deploys are automatic via **GitHub → Vercel**. The repo (`KaskasR/tv-guide`, private) is connected
+to the Vercel project, so:
+
+- **Push to `main`** → Vercel builds and deploys to **production** (aliased to `tv-guide-neon.vercel.app`).
+- **Push a branch / open a PR** → Vercel builds an isolated **preview deployment** you can test before
+  merging. Prefer this for changes rather than pushing straight to `main`.
+
+Env vars (`YOUTUBE_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+`OAUTH_TOKEN_SECRET`) live in the Vercel project settings and apply to every deploy.
+
 ```bash
-npx vercel          # first deploy / preview
-npx vercel --prod   # production deploy
+git checkout -b my-change   # work on a branch
+git commit -am "..."
+git push -u origin my-change # → preview deploy; merge to main → production deploy
 ```
 
-No GitHub integration — git is used for local commit snapshots only; deploys go straight from the
-terminal via the Vercel CLI.
+Manual `npx vercel --prod` from the terminal still works as a fallback.

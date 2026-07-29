@@ -6,9 +6,10 @@ committed, so bugs can't pile up invisibly.
 ## The golden rules of this build
 
 1. **One phase at a time.** Don't start a phase until the previous one works on the real TV/phone.
-2. **Every phase ends the same way:** it runs locally, you test it, you `git commit` (a local
-   snapshot), and (from Phase 0 on) you redeploy with `npx vercel --prod`. A phase isn't "done"
-   until it's committed and live. (No GitHub in the loop — git is local snapshots, Vercel CLI deploys.)
+2. **Every phase ends the same way:** it runs locally, you test it, you `git commit`, and you push.
+   The repo (`KaskasR/tv-guide`) is connected to Vercel, so a push to `main` auto-deploys to
+   production; a branch/PR gets a preview deploy. A phase isn't "done" until it's committed and live.
+   (Manual `npx vercel --prod` still works as a fallback.)
 3. **Test the casting on the actual Apple TV constantly.** The Lounge API is unofficial — a thing
    that worked yesterday can break. Catch it early, not after you've built 5 features on top.
 4. **If Claude Code starts sprawling** (touching lots of files, adding features you didn't ask for),
@@ -430,6 +431,7 @@ switch) to keep this affordable — don't move Home fetching to a per-tab/per-re
 2. Let it make the change; read its summary.
 3. `npm run dev` and test locally on your phone (and the TV for casting phases).
 4. If it's wrong, describe exactly what's wrong; iterate in small steps.
-5. When it works: `git add -A && git commit -m "phase N: ..."` (local snapshot).
-6. Redeploy with `npx vercel --prod` and confirm the live URL works.
+5. When it works: `git add -A && git commit -m "phase N: ..."`.
+6. Push — `git push` to `main` auto-deploys to production via Vercel (or push a branch/PR for a
+   preview deploy first). Confirm the live URL works.
 7. Only then start the next phase.
